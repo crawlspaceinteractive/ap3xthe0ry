@@ -34,7 +34,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const game = new RacerGame(canvas);
 
   // Touch controls overlay (mobile only, no-op on desktop)
-  createTouchOverlay(shell, game.input);
+  // CreateTouchOverlay(shell, game.input);
 
   game.start();
 
