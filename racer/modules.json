@@ -1,0 +1,11 @@
+[
+  "chasecam.js",
+  "racergame.js",
+  "racerhud.js",
+  "racersound.js",
+  "scan-modules.js",
+  "track.js",
+  "trackrender.js",
+  "vehicle.js",
+  "vehiclemesh.js"
+]

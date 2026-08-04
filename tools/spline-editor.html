@@ -1,0 +1,1578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spline Track Editor</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Oswald:wght@400;600&display=swap');
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0e0820; --win-bg: #160d26; --win-border: #0a0516; --win-inset: #6a5a8a;
+  --titlebar-grad: linear-gradient(#3d2d72 0%, #1c1040 100%);
+  --btn-bg: #2e2050; --btn-border-lt: #8a7aaa; --btn-border-rb: #080312; --btn-close-bg: #4a1030;
+  --section-bg: #0f0820; --section-hdr: linear-gradient(90deg, #2a1e50 0%, #1a1038 100%);
+  --section-border-lt: #080312; --section-border-rb: #5a4a7a;
+  --text-main: #fff; --text-dim: #6a5a7a; --text-label: #6a5a8a; --text-accent: #a08ace; --text-body: #d0c0e8;
+  --input-bg: #080616; --input-border: #3a2a5a;
+  --font: 'Share Tech Mono', 'Tahoma', monospace; --font-ui: 'Oswald', sans-serif;
+}
+html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); font-family: var(--font); font-size: 11px; color: var(--text-main); }
+body { display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+.winbox { display: flex; flex-direction: column; background: var(--win-bg); border: 1px solid var(--win-border); box-shadow: inset 1px 1px 0 var(--win-inset), 2px 2px 10px rgba(0,0,0,.8); overflow: hidden; min-height: 0; }
+.titlebar { display: flex; align-items: center; gap: 4px; padding: 3px 4px 3px 6px; background: var(--titlebar-grad); border-bottom: 1px solid var(--win-border); flex-shrink: 0; user-select: none; }
+.titlebar-icon { font-size: 9px; opacity: .7; margin-right: 2px; }
+.titlebar-title { flex: 1; font-size: 11px; font-weight: bold; color: #fff; text-shadow: 1px 1px 0 rgba(0,0,0,.6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.win-btns { display: flex; gap: 2px; }
+.win-btn { width: 16px; height: 14px; background: var(--btn-bg); border-top: 1px solid var(--btn-border-lt); border-left: 1px solid var(--btn-border-lt); border-right: 1px solid var(--btn-border-rb); border-bottom: 1px solid var(--btn-border-rb); color: #ccc; font-size: 8px; display: flex; align-items: center; justify-content: center; cursor: default; font-family: var(--font); }
+.win-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+.row { display: flex; gap: 4px; min-height: 0; }
+
+/* ── Top panels ─────────────────────────────────────────────── */
+#top-row { flex: 1; min-height: 0; display: flex; gap: 4px; }
+#panel-2d, #panel-3d { flex: 1; min-width: 0; }
+#spline-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#spline-canvas { width: 100%; flex: 1; min-height: 0; display: block; cursor: crosshair; background: #070510; touch-action: none; }
+#view3d-wrap { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+#three-canvas { width: 100%; flex: 1; min-height: 0; display: block; touch-action: none; }
+.status-bar { flex-shrink: 0; background: #0c0818; border-top: 1px solid #1a1030; padding: 3px 8px; display: flex; align-items: center; gap: 10px; font-size: 10px; color: var(--text-accent); min-height: 22px; }
+.status-bar .kb { color: #c0a0ff; font-weight: bold; margin-right: 2px; }
+.status-bar .sep { color: var(--text-dim); margin: 0 4px; }
+#status-2d { margin-left: auto; color: var(--text-dim); font-size: 9px; white-space: nowrap; }
+#status-3d { margin-left: auto; color: var(--text-dim); font-size: 9px; white-space: nowrap; }
+
+/* ── Bottom panel ───────────────────────────────────────────── */
+#bottom-row { flex-shrink: 0; height: 248px; display: flex; gap: 4px; }
+.controls-body { flex: 1; min-height: 0; display: flex; gap: 6px; overflow: auto; padding: 5px; }
+.c-section { border: 1px solid; border-color: var(--section-border-lt) var(--section-border-rb) var(--section-border-rb) var(--section-border-lt); background: var(--section-bg); display: flex; flex-direction: column; flex-shrink: 0; }
+.section-hdr { background: var(--section-hdr); border-bottom: 1px solid var(--section-border-lt); padding: 2px 6px; font-size: 9px; font-weight: bold; color: #7a6a9a; letter-spacing: .12em; text-transform: uppercase; font-family: var(--font-ui); display: flex; align-items: center; gap: 5px; }
+.section-hdr .badge { font-size: 8px; color: #a090d0; font-style: italic; font-family: var(--font); text-transform: none; letter-spacing: 0; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+.section-body { padding: 5px 6px; display: flex; flex-direction: column; gap: 5px; overflow-y: auto; flex: 1; min-height: 0; }
+.section-body::-webkit-scrollbar, .controls-body::-webkit-scrollbar { width: 6px; height: 6px; background: #0c0818; }
+.section-body::-webkit-scrollbar-thumb, .controls-body::-webkit-scrollbar-thumb { background: #3a2a5a; }
+.c-section.w-200 { width: 210px; }
+.c-section.w-250 { width: 262px; }
+.c-section.w-flex { flex: 1; min-width: 220px; }
+
+.field-row { display: flex; align-items: center; gap: 5px; }
+.field-label { color: var(--text-label); width: 96px; flex-shrink: 0; font-size: 10px; }
+.field-label.narrow { width: 66px; }
+.field-val { flex: 1; }
+.field-num { color: var(--text-dim); width: 40px; text-align: right; font-size: 9px; flex-shrink: 0; }
+input[type=range].wb-range { width: 100%; accent-color: #7060b0; height: 14px; }
+input[type=text].wb-input { background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-body); font-family: var(--font); font-size: 10px; padding: 2px 4px; width: 100%; outline: none; }
+input[type=text].wb-input:focus { border-color: #6a5a9a; }
+input[type=color].wb-color { width: 26px; height: 18px; border: 1px solid var(--input-border); background: #000; cursor: pointer; padding: 0; }
+select.wb-select { background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-body); font-family: var(--font); font-size: 10px; padding: 2px 4px; width: 100%; outline: none; }
+.toggle-btn { display: flex; background: var(--input-bg); border: 1px solid var(--input-border); cursor: pointer; overflow: hidden; }
+.toggle-opt { padding: 2px 7px; font-size: 10px; color: var(--text-dim); transition: background .1s; }
+.toggle-opt.active { background: #5040a0; color: #fff; }
+.wb-btn { display: block; width: 100%; padding: 3px 6px; background: var(--btn-bg); border-top: 1px solid var(--btn-border-lt); border-left: 1px solid var(--btn-border-lt); border-right: 1px solid var(--btn-border-rb); border-bottom: 1px solid var(--btn-border-rb); color: var(--text-body); font-family: var(--font); font-size: 10px; cursor: pointer; text-align: center; margin-bottom: 2px; }
+.wb-btn:active { border-color: var(--btn-border-rb) var(--btn-border-lt) var(--btn-border-lt) var(--btn-border-rb); }
+.wb-btn.active { background: #5040a0; border-color: #9080c0; color: #fff; }
+.wb-btn-sm { padding: 2px 6px; font-size: 10px; width: auto; margin: 0; }
+.wb-btn-sm.active { background: #5040a0; border-color: #9080c0; color: #fff; }
+.hint-text { color: var(--text-dim); font-size: 9px; line-height: 1.5; margin-top: 4px; }
+
+/* tool toggle row */
+.tool-toggle { display: flex; gap: 3px; }
+.tool-btn { flex: 1; padding: 3px 4px; font-size: 10px; text-align: center; background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-dim); cursor: pointer; }
+.tool-btn.active { background: #5040a0; border-color: #9080c0; color: #fff; }
+
+/* palette */
+.palette-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }
+.palette-item { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 2px; background: #1a0e30; border: 1px solid #2a1a40; cursor: pointer; user-select: none; }
+.palette-item:hover { border-color: #4a3a70; }
+.palette-item.active { border-color: #8060c0; background: #241648; }
+.palette-swatch { width: 20px; height: 14px; border: 1px solid #000; }
+.palette-name { font-size: 8px; color: var(--text-body); white-space: nowrap; }
+
+#procgen-list { display: flex; flex-direction: column; gap: 3px; max-height: 140px; overflow-y: auto; }
+.pg-row { display: flex; align-items: center; gap: 5px; font-size: 9px; color: var(--text-dim); }
+.pg-row b { color: var(--text-body); font-weight: normal; }
+</style>
+</head>
+<body>
+
+<div class="row" id="top-row">
+  <!-- 2D Spline Drawing -->
+  <div class="winbox" id="panel-2d">
+    <div class="titlebar">
+      <span class="titlebar-icon">✏️</span>
+      <span class="titlebar-title">Spline Drawing — Top-Down (XZ)</span>
+      <div class="win-btns"><div class="win-btn">_</div><div class="win-btn">□</div><div class="win-btn close">✕</div></div>
+    </div>
+    <div class="win-content">
+      <div id="spline-wrap">
+        <div style="display:flex;align-items:center;gap:6px;padding:4px 6px;background:#0c0818;border-bottom:1px solid #1a1030;flex-wrap:wrap;">
+          <div class="tool-toggle" id="tool-toggle">
+            <span class="tool-btn active" data-tool="draw">✎ Draw</span>
+            <span class="tool-btn" data-tool="move">✥ Move</span>
+            <span class="tool-btn" data-tool="delete">✕ Del</span>
+            <span class="tool-btn" data-tool="place">✚ Place</span>
+          </div>
+          <span class="sep" style="color:var(--text-dim);">|</span>
+          <div class="toggle-btn" id="snap-toggle">
+            <span class="toggle-opt active" data-val="on">Grid snap</span>
+            <span class="toggle-opt" data-val="off">Off</span>
+          </div>
+          <div class="toggle-btn" id="closed-toggle">
+            <span class="toggle-opt active" data-val="on">Closed loop</span>
+            <span class="toggle-opt" data-val="off">Open</span>
+          </div>
+          <span class="sep" style="color:var(--text-dim);">|</span>
+          <button class="wb-btn wb-btn-sm" id="btn-fit">Fit</button>
+          <button class="wb-btn wb-btn-sm" id="btn-clear">Clear</button>
+          <button class="wb-btn wb-btn-sm" id="btn-sample">Sample Ring</button>
+          <label class="toggle-wrap" style="display:flex;align-items:center;gap:4px;margin-left:auto;color:var(--text-dim);font-size:9px;">
+            <input type="checkbox" id="show-decor" checked> Map decor
+          </label>
+        </div>
+        <canvas id="spline-canvas"></canvas>
+        <div class="status-bar">
+          <span class="kb">Click</span> add point
+          <span class="sep">|</span>
+          <span class="kb">Drag</span> move
+          <span class="sep">|</span>
+          <span class="kb">Double-click</span> delete
+          <span class="sep">|</span>
+          <span class="kb">Wheel</span> zoom
+          <span class="sep">|</span>
+          <span class="kb">MMB / Space</span> pan
+          <span id="status-2d">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Isometric 3D -->
+  <div class="winbox" id="panel-3d">
+    <div class="titlebar">
+      <span class="titlebar-icon">🏁</span>
+      <span class="titlebar-title">Isometric Track View — elevation &amp; bank handles</span>
+      <div class="win-btns"><div class="win-btn">_</div><div class="win-btn">□</div><div class="win-btn close">✕</div></div>
+    </div>
+    <div class="win-content">
+      <div id="view3d-wrap">
+        <canvas id="three-canvas"></canvas>
+        <div class="status-bar">
+          <span class="kb">LMB</span> handle (▲ elev / ring bank / ● move)
+          <span class="sep">|</span>
+          <span class="kb">LMB</span> empty: orbit
+          <span class="sep">|</span>
+          <span class="kb">RMB</span> pan
+          <span class="sep">|</span>
+          <span class="kb">Wheel</span> zoom
+          <button class="wb-btn wb-btn-sm" id="btn-iso" style="margin-left:8px;">Reset Iso</button>
+          <span id="status-3d">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bottom: sliders + palette -->
+<div class="row" id="bottom-row">
+  <div class="winbox">
+    <div class="titlebar">
+      <span class="titlebar-icon">🎛</span>
+      <span class="titlebar-title">Track Controls</span>
+      <div class="win-btns"><div class="win-btn">_</div><div class="win-btn">□</div><div class="win-btn close">✕</div></div>
+    </div>
+    <div class="win-content"><div class="controls-body">
+
+      <!-- SPLINE -->
+      <div class="c-section w-200">
+        <div class="section-hdr">Spline <span class="badge" id="spline-badge">0 pts</span></div>
+        <div class="section-body">
+          <div class="field-row">
+            <span class="field-label">Track name</span>
+            <input type="text" class="wb-input field-val" id="track-name" value="my_track">
+          </div>
+          <div class="field-row">
+            <span class="field-label">Half width</span>
+            <input type="range" class="wb-range field-val" id="hw-track" min="1" max="20" step="0.5" value="7">
+            <span class="field-num" id="hw-track-val">7</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Sample space</span>
+            <input type="range" class="wb-range field-val" id="sample-space" min="1" max="8" step="0.1" value="3.2">
+            <span class="field-num" id="sample-space-val">3.2</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Track length</span>
+            <span class="field-val" style="color:var(--text-body);" id="len-val">0 u</span>
+          </div>
+          <div class="hint-text">Click the drawing window to add spline points. The Catmull-Rom loop is sampled into the track ribbon both views show.</div>
+        </div>
+      </div>
+
+      <!-- SELECTED POINT -->
+      <div class="c-section w-200">
+        <div class="section-hdr">Snap Point <span class="badge" id="point-badge">— none —</span></div>
+        <div class="section-body">
+          <div class="field-row">
+            <span class="field-label">Elevation Y</span>
+            <input type="range" class="wb-range field-val" id="point-y" min="-30" max="30" step="0.1" value="0">
+            <span class="field-num" id="point-y-val">0</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Bank (rot)</span>
+            <input type="range" class="wb-range field-val" id="point-bank" min="-60" max="60" step="1" value="0">
+            <span class="field-num" id="point-bank-val">0°</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Width override</span>
+            <input type="range" class="wb-range field-val" id="point-hw" min="0" max="20" step="0.5" value="0">
+            <span class="field-num" id="point-hw-val">auto</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Position</span>
+            <span class="field-val" style="color:var(--text-body);font-size:9px;" id="point-pos">—</span>
+          </div>
+          <div class="field-row" style="gap:4px;">
+            <button class="wb-btn wb-btn-sm" id="btn-insert" style="flex:1;">+ Insert</button>
+            <button class="wb-btn wb-btn-sm" id="btn-delete-point" style="flex:1;">Delete</button>
+          </div>
+          <div class="hint-text">Drag the ▲ arrow (elevation) or the ring (bank) in the 3D view, or use these sliders. Width 0 = track default.</div>
+        </div>
+      </div>
+
+      <!-- SELECTED OBJECT -->
+      <div class="c-section w-200">
+        <div class="section-hdr">Object <span class="badge" id="obj-badge">— none —</span></div>
+        <div class="section-body">
+          <div class="field-row">
+            <span class="field-label">Rotation</span>
+            <input type="range" class="wb-range field-val" id="obj-rot" min="0" max="360" step="1" value="0">
+            <span class="field-num" id="obj-rot-val">0°</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Scale</span>
+            <input type="range" class="wb-range field-val" id="obj-scale" min="0.25" max="5" step="0.05" value="1">
+            <span class="field-num" id="obj-scale-val">1</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Height Y</span>
+            <input type="range" class="wb-range field-val" id="obj-y" min="-10" max="30" step="0.1" value="0">
+            <span class="field-num" id="obj-y-val">0</span>
+          </div>
+          <div class="field-row">
+            <span class="field-label">Grid pos</span>
+            <span class="field-val" style="color:var(--text-body);font-size:9px;" id="obj-pos">—</span>
+          </div>
+          <button class="wb-btn wb-btn-sm" id="btn-delete-obj">Delete object</button>
+          <div class="hint-text">Pick a palette item below, then click the drawing window. Objects snap to the grid (step 4 u).</div>
+        </div>
+      </div>
+
+      <!-- OBJECT PALETTE -->
+      <div class="c-section w-flex" style="min-width:250px;">
+        <div class="section-hdr">Object Palette <span class="badge" id="palette-badge">active: —</span></div>
+        <div class="section-body">
+          <div class="palette-grid" id="palette-grid"></div>
+          <div class="field-row">
+            <span class="field-label narrow">Grid step</span>
+            <input type="range" class="wb-range field-val" id="grid-step" min="1" max="16" step="1" value="4">
+            <span class="field-num" id="grid-step-val">4</span>
+          </div>
+          <div class="hint-text">Place with the grid snap toggle ON to lock objects to the grid. Remove a placed object with the Delete tool or double-click.</div>
+        </div>
+      </div>
+
+      <!-- PROCGEN -->
+      <div class="c-section w-200">
+        <div class="section-hdr">Procgen Map <span class="badge" id="procgen-badge">—</span></div>
+        <div class="section-body">
+          <div class="field-row">
+            <span class="field-label">Seed</span>
+            <input type="text" class="wb-input field-val" id="pg-seed" value="1337">
+          </div>
+          <div class="field-row">
+            <span class="field-label">Density</span>
+            <input type="range" class="wb-range field-val" id="pg-density" min="5" max="100" step="5" value="50">
+            <span class="field-num" id="pg-density-val">50</span>
+          </div>
+          <div class="field-row" style="gap:4px;">
+            <button class="wb-btn wb-btn-sm" id="btn-generate" style="flex:1;">Generate Map</button>
+            <button class="wb-btn wb-btn-sm" id="btn-clear-map" style="flex:1;">Clear</button>
+          </div>
+          <div id="procgen-list"></div>
+          <div class="hint-text">Builds terrain, barriers, lights, cones, signs and scenery around the drawn spline (deterministic per seed). Renders in the 3D view and exports with the track.</div>
+        </div>
+      </div>
+
+      <!-- EXPORT -->
+      <div class="c-section w-200">
+        <div class="section-hdr">Export</div>
+        <div class="section-body">
+          <button class="wb-btn" id="btn-export">⬇ Export Track JSON</button>
+          <button class="wb-btn" id="btn-copy">⧉ Copy JSON</button>
+          <label class="wb-btn" style="cursor:pointer;">⤒ Load Track JSON
+            <input type="file" id="load-input" accept=".json" style="display:none">
+          </label>
+          <div class="field-row">
+            <span class="field-label narrow">Include</span>
+            <label style="display:flex;align-items:center;gap:4px;color:var(--text-body);font-size:9px;">
+              <input type="checkbox" id="export-decor" checked> map decor
+            </label>
+          </div>
+          <div id="export-size" style="color:var(--text-dim);font-size:9px;">—</div>
+          <div class="hint-text">Exports control points (x/y/z + bank + width), placed objects, and the generated map as one JSON the track builder can consume.</div>
+        </div>
+      </div>
+
+    </div></div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ════════════════════════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════════════════════════
+const state = {
+  name: 'my_track',
+  points: [],          // [{ x, y, z, bank, hw }]  — y = elevation, x/z = ground plane
+  closed: true,
+  halfWidth: 7,
+  sampleSpace: 3.2,
+  grid: 4,
+  snap: true,
+  tool: 'draw',        // draw | move | delete
+  selected: -1,
+  activeObj: 'cone',
+  objects: [],         // [{ type, x, y, z, rot, scale }]  user-placed, grid-locked
+  selectedObj: -1,
+  seed: 1337,
+  density: 50,
+  procgen: [],         // [{ kind, x, y, z, rot, scale }]  auto-generated map decor
+  samples: [],         // sampled spline: {x,y,z,fx,fz,px,pz,hw,bank,dist}
+  totalLen: 0,
+  showDecor: true,
+};
+
+const PALETTE = [
+  { type: 'barrier', name: 'Barrier', color: '#d05050' },
+  { type: 'cone',    name: 'Cone',    color: '#ff9a2a' },
+  { type: 'boost',   name: 'Boost',   color: '#6ee86e' },
+  { type: 'oil',     name: 'Oil',     color: '#3a3a4a' },
+  { type: 'ramp',    name: 'Ramp',    color: '#c8b090' },
+  { type: 'sign',    name: 'Sign',    color: '#5aa8ff' },
+  { type: 'light',   name: 'Light',   color: '#ffe27a' },
+  { type: 'crate',   name: 'Crate',   color: '#b58a52' },
+  { type: 'tree',    name: 'Tree',    color: '#48b048' },
+  { type: 'rock',    name: 'Rock',    color: '#8a8a94' },
+];
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const r1 = (v) => Math.round(v * 10) / 10;
+const r2 = (v) => Math.round(v * 100) / 100;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ════════════════════════════════════════════════════════════════════════════
+//  SPLINE MATH — closed/open Catmull-Rom sampling (same form as racer/track.js)
+// ════════════════════════════════════════════════════════════════════════════
+function cr(p0, p1, p2, p3, t) {
+  const t2 = t * t, t3 = t2 * t;
+  return 0.5 * ((2 * p1) + (-p0 + p2) * t +
+    (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+    (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+}
+
+function resample() {
+  const pts = state.points;
+  const n = pts.length;
+  const samples = [];
+  state.totalLen = 0;
+  if (n >= 2) {
+    const segs = state.closed ? n : n - 1;
+    for (let i = 0; i < segs; i++) {
+      const p0 = pts[state.closed ? (i - 1 + n) % n : Math.max(0, i - 1)];
+      const p1 = pts[i];
+      const p2 = pts[(i + 1) % n];
+      const p3 = pts[state.closed ? (i + 2) % n : Math.min(n - 1, i + 2)];
+      const chord = Math.hypot(p2.x - p1.x, p2.z - p1.z);
+      const steps = Math.max(2, Math.ceil(chord / state.sampleSpace));
+      for (let s = 0; s < steps; s++) {
+        const t = s / steps;
+        const bank = lerp(p1.bank || 0, p2.bank || 0, t);
+        const hw = lerp(p1.hw || state.halfWidth, p2.hw || state.halfWidth, t);
+        samples.push({
+          x: cr(p0.x, p1.x, p2.x, p3.x, t),
+          y: cr(p0.y, p1.y, p2.y, p3.y, t),
+          z: cr(p0.z, p1.z, p2.z, p3.z, t),
+          bank, hw,
+        });
+      }
+    }
+    if (!state.closed) {
+      const last = pts[n - 1];
+      samples.push({ x: last.x, y: last.y, z: last.z, bank: last.bank || 0, hw: last.hw || state.halfWidth });
+    }
+  }
+  const count = samples.length;
+  let dist = 0;
+  for (let i = 0; i < count; i++) {
+    const prev = samples[(i - 1 + count) % count];
+    const next = samples[(i + 1) % count];
+    const cur = samples[i];
+    let fx = next.x - prev.x;
+    let fz = next.z - prev.z;
+    const fl = Math.hypot(fx, fz) || 1;
+    fx /= fl; fz /= fl;
+    cur.fx = fx; cur.fz = fz;
+    cur.px = -fz; cur.pz = fx;
+    if (i > 0) dist += Math.hypot(cur.x - samples[i - 1].x, cur.z - samples[i - 1].z);
+    cur.dist = dist;
+  }
+  state.totalLen = dist;
+  state.samples = samples;
+}
+const lerp = (a, b, t) => a + (b - a) * t;
+
+function ribbonCorners(s) {
+  const b = (s.bank || 0) * Math.PI / 180;
+  const cb = Math.cos(b), sb = Math.sin(b);
+  const rx = s.px * cb, rz = s.pz * cb;
+  return {
+    L: [s.x - rx * s.hw, s.y - sb * s.hw, s.z - rz * s.hw],
+    R: [s.x + rx * s.hw, s.y + sb * s.hw, s.z + rz * s.hw],
+  };
+}
+function heatColor(t) {
+  t = clamp(t, 0, 1);
+  const stops = [[10, 20, 150], [0, 170, 220], [80, 240, 140], [255, 210, 70], [240, 70, 50]];
+  const f = t * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(f));
+  const k = f - i;
+  const a = stops[i], b = stops[i + 1];
+  return `rgb(${Math.round(lerp(a[0], b[0], k))},${Math.round(lerp(a[1], b[1], k))},${Math.round(lerp(a[2], b[2], k))})`;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  2D SPLINE CANVAS
+// ════════════════════════════════════════════════════════════════════════════
+const c2d = document.getElementById('spline-canvas');
+const ctx2d = c2d.getContext('2d');
+const view = { cx: 0, cz: 0, scale: 1 }; // scale = px per world unit
+
+function resize2D() {
+  const r = c2d.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  c2d.width = Math.max(2, Math.round(r.width * dpr));
+  c2d.height = Math.max(2, Math.round(r.height * dpr));
+  ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+  draw2D();
+}
+
+function w2sX(x) { const r = c2d.getBoundingClientRect(); return (x - view.cx) * view.scale + r.width / 2; }
+function w2sZ(z) { const r = c2d.getBoundingClientRect(); return (z - view.cz) * view.scale + r.height / 2; }
+function s2w(px, py) {
+  const r = c2d.getBoundingClientRect();
+  return { x: view.cx + (px - r.width / 2) / view.scale, z: view.cz + (py - r.height / 2) / view.scale };
+}
+function fitView() {
+  const r = c2d.getBoundingClientRect();
+  if (state.points.length < 1) { view.cx = 0; view.cz = 0; view.scale = Math.min(r.width, r.height) / 120; return; }
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of state.points) {
+    minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+    minZ = Math.min(minZ, p.z); maxZ = Math.max(maxZ, p.z);
+  }
+  for (const o of state.objects) {
+    minX = Math.min(minX, o.x); maxX = Math.max(maxX, o.x);
+    minZ = Math.min(minZ, o.z); maxZ = Math.max(maxZ, o.z);
+  }
+  const m = state.halfWidth + 10;
+  const pad = 24;
+  view.cx = (minX + maxX) / 2;
+  view.cz = (minZ + maxZ) / 2;
+  view.scale = Math.min((r.width - pad * 2) / Math.max(1, (maxX - minX) + m * 2), (r.height - pad * 2) / Math.max(1, (maxZ - minZ) + m * 2));
+  view.scale = Math.max(0.5, Math.min(60, view.scale));
+}
+
+function draw2D() {
+  const r = c2d.getBoundingClientRect();
+  const w = r.width, h = r.height;
+  if (w <= 0 || h <= 0) return;
+  ctx2d.clearRect(0, 0, w, h);
+  ctx2d.fillStyle = '#070510';
+  ctx2d.fillRect(0, 0, w, h);
+
+  drawGrid(w, h);
+  const S = state.samples;
+
+  // road ribbon (translucent) + heat centerline
+  let minY = Infinity, maxY = -Infinity;
+  for (const s of S) { if (s.y < minY) minY = s.y; if (s.y > maxY) maxY = s.y; }
+  const yRange = Math.max(1, maxY - minY);
+
+  ctx2d.lineJoin = 'round';
+  if (S.length > 1) {
+    const n = S.length;
+    ctx2d.fillStyle = 'rgba(150,160,180,0.16)';
+    ctx2d.strokeStyle = 'rgba(150,160,180,0.35)';
+    ctx2d.lineWidth = Math.max(1, view.scale * 0.06);
+    ctx2d.beginPath();
+    for (let i = 0; i < n; i++) {
+      const c = ribbonCorners(S[i]);
+      ctx2d.moveTo(w2sX(c.L[0]), w2sZ(c.L[2]));
+      ctx2d.lineTo(w2sX(c.R[0]), w2sZ(c.R[2]));
+    }
+    if (state.closed) ctx2d.closePath();
+    ctx2d.stroke();
+
+    ctx2d.beginPath();
+    for (let i = 0; i < n; i++) {
+      const a = ribbonCorners(S[i]);
+      const b = ribbonCorners(S[(i + 1) % n]);
+      ctx2d.moveTo(w2sX(a.L[0]), w2sZ(a.L[2]));
+      ctx2d.lineTo(w2sX(b.L[0]), w2sZ(b.L[2]));
+      ctx2d.lineTo(w2sX(b.R[0]), w2sZ(b.R[2]));
+      ctx2d.lineTo(w2sX(a.R[0]), w2sZ(a.R[2]));
+      ctx2d.closePath();
+      ctx2d.fill();
+    }
+    if (!state.closed) {
+      ctx2d.beginPath();
+      ctx2d.moveTo(w2sX(ribbonCorners(S[0]).L[0]), w2sZ(ribbonCorners(S[0]).L[2]));
+      ctx2d.lineTo(w2sX(ribbonCorners(S[0]).R[0]), w2sZ(ribbonCorners(S[0]).R[2]));
+      ctx2d.stroke();
+    }
+
+    // elevation heat centerline
+    for (let i = 0; i < n; i++) {
+      const a = S[i], b = S[(i + 1) % n];
+      ctx2d.strokeStyle = heatColor((a.y - minY) / yRange);
+      ctx2d.lineWidth = Math.max(1.5, view.scale * 0.1);
+      ctx2d.beginPath();
+      ctx2d.moveTo(w2sX(a.x), w2sZ(a.z));
+      ctx2d.lineTo(w2sX(b.x), w2sZ(b.z));
+      ctx2d.stroke();
+    }
+  }
+
+  // start marker
+  if (S.length > 2) {
+    const s0 = S[0];
+    ctx2d.fillStyle = '#ffe27a';
+    ctx2d.beginPath();
+    ctx2d.arc(w2sX(s0.x), w2sZ(s0.z), Math.max(3, view.scale * 0.5), 0, Math.PI * 2);
+    ctx2d.fill();
+  }
+
+  // procgen decor (faint)
+  if (state.showDecor) {
+    for (const d of state.procgen) {
+      ctx2d.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx2d.fillRect(w2sX(d.x) - 1.5, w2sZ(d.z) - 1.5, 3, 3);
+    }
+  }
+
+  // user objects (grid-locked markers)
+  for (let i = 0; i < state.objects.length; i++) {
+    const o = state.objects[i];
+    const def = PALETTE.find(p => p.type === o.type) || PALETTE[0];
+    const sx = w2sX(o.x), sy = w2sZ(o.z);
+    const sel = i === state.selectedObj;
+    ctx2d.fillStyle = sel ? '#ffffff' : def.color;
+    ctx2d.fillRect(sx - 4, sy - 4, 8, 8);
+    ctx2d.strokeStyle = sel ? '#ffe27a' : 'rgba(0,0,0,0.6)';
+    ctx2d.lineWidth = 1;
+    ctx2d.strokeRect(sx - 5, sy - 5, 10, 10);
+    if (sel) {
+      ctx2d.setLineDash([3, 2]);
+      ctx2d.strokeRect(sx - 9, sy - 9, 18, 18);
+      ctx2d.setLineDash([]);
+    }
+  }
+
+  // control points
+  for (let i = 0; i < state.points.length; i++) {
+    const p = state.points[i];
+    const sx = w2sX(p.x), sy = w2sZ(p.z);
+    const sel = i === state.selected;
+    ctx2d.fillStyle = sel ? '#ff9a2a' : '#a08ace';
+    ctx2d.fillRect(sx - 3, sy - 3, 6, 6);
+    ctx2d.strokeStyle = sel ? '#fff' : 'rgba(0,0,0,0.5)';
+    ctx2d.strokeRect(sx - 3, sy - 3, 6, 6);
+    if (sel) {
+      ctx2d.setLineDash([3, 2]);
+      ctx2d.strokeStyle = '#ffd27a';
+      ctx2d.beginPath(); ctx2d.arc(sx, sy, 10, 0, Math.PI * 2); ctx2d.stroke();
+      ctx2d.setLineDash([]);
+    }
+  }
+
+  drawStatus2D();
+}
+
+function drawGrid(w, h) {
+  const g = state.grid;
+  const x0 = view.cx - (w / 2) / view.scale;
+  const x1 = view.cx + (w / 2) / view.scale;
+  const z0 = view.cz - (h / 2) / view.scale;
+  const z1 = view.cz + (h / 2) / view.scale;
+  ctx2d.strokeStyle = 'rgba(110,90,140,0.16)';
+  ctx2d.lineWidth = 1;
+  ctx2d.beginPath();
+  for (let wx = Math.ceil(x0 / g) * g; wx <= x1; wx += g) {
+    const sx = w2sX(wx);
+    ctx2d.moveTo(sx, 0); ctx2d.lineTo(sx, h);
+  }
+  for (let wz = Math.ceil(z0 / g) * g; wz <= z1; wz += g) {
+    const sy = w2sZ(wz);
+    ctx2d.moveTo(0, sy); ctx2d.lineTo(w, sy);
+  }
+  ctx2d.stroke();
+  ctx2d.strokeStyle = 'rgba(150,120,190,0.5)';
+  ctx2d.strokeRect(w2sX(0) - 0.5, w2sZ(0) - 0.5, 1, 1);
+}
+
+function drawStatus2D() {
+  const el = document.getElementById('status-2d');
+  const m = lastMouse2d || null;
+  if (!m) { el.textContent = `${state.points.length} pts · ${state.objects.length} objs · len ${Math.round(state.totalLen)} u`; return; }
+  el.textContent = `${r2(m.x)}, ${r2(m.z)} · grid ${r2(snapV(m.x))},${r2(snapV(m.z))} · ${state.points.length} pts · len ${Math.round(state.totalLen)} u`;
+}
+
+const snapV = (v) => Math.round(v / state.grid) * state.grid;
+function snapPt(v) { return state.snap ? snapV(v) : v; }
+
+// ---- 2D pointer interaction ----
+let lastMouse2d = null;
+let dragPt = -1;
+let panning = false;
+let panLast = null;
+let spaceDown = false;
+
+function hitTestPoint(px, py) {
+  for (let i = 0; i < state.points.length; i++) {
+    const p = state.points[i];
+    const dx = w2sX(p.x) - px, dy = w2sZ(p.z) - py;
+    if (dx * dx + dy * dy < 49) return i;
+  }
+  return -1;
+}
+function hitTestObject(px, py) {
+  for (let i = 0; i < state.objects.length; i++) {
+    const o = state.objects[i];
+    const dx = w2sX(o.x) - px, dy = w2sZ(o.z) - py;
+    if (dx * dx + dy * dy < 64) return i;
+  }
+  return -1;
+}
+
+c2d.addEventListener('pointerdown', (e) => {
+  c2d.setPointerCapture(e.pointerId);
+  const r = c2d.getBoundingClientRect();
+  const px = e.clientX - r.left, py = e.clientY - r.top;
+  if (e.button === 1 || (e.button === 0 && (e.shiftKey || spaceDown))) { panning = true; panLast = { x: px, y: py }; return; }
+  if (e.button !== 0) return;
+  const w = s2w(px, py);
+
+  if (state.tool === 'delete') {
+    const hi = hitTestPoint(px, py);
+    const ho = hitTestObject(px, py);
+    if (ho >= 0) { state.objects.splice(ho, 1); if (state.selectedObj === ho) state.selectedObj = -1; else if (state.selectedObj > ho) state.selectedObj--; refreshAll(); return; }
+    if (hi >= 0) { removePoint(hi); return; }
+    return;
+  }
+
+  const hi = hitTestPoint(px, py);
+  if (state.tool === 'place') {
+    const ho = hi < 0 ? hitTestObject(px, py) : -1;
+    if (hi < 0 && ho < 0) placeObject(w.x, w.z);
+    return;
+  }
+  if (state.tool === 'move') {
+    const ho = hi < 0 ? hitTestObject(px, py) : -1;
+    if (hi >= 0) {
+      state.selected = hi; state.selectedObj = -1; dragPt = hi;
+      syncInspector(); refreshAll();
+    } else if (ho >= 0) {
+      state.selected = -1; state.selectedObj = ho;
+      syncInspector(); refresh3D();
+    } else {
+      state.selected = -1; state.selectedObj = -1;
+      syncInspector(); refresh3D();
+    }
+    return;
+  }
+
+  // draw tool: add a point (drag immediately if near an existing one)
+  if (hi >= 0) { state.selected = hi; state.selectedObj = -1; dragPt = hi; syncInspector(); refreshAll(); return; }
+  const p = { x: snapPt(w.x), y: 0, z: snapPt(w.z), bank: 0, hw: null };
+  if (state.points.length >= 2) p.y = state.points[state.points.length - 1].y;
+  state.points.push(p);
+  state.selected = state.points.length - 1;
+  state.selectedObj = -1;
+  dragPt = state.selected;
+  fitViewIfNeeded();
+  syncInspector();
+  refreshAll();
+});
+
+c2d.addEventListener('pointermove', (e) => {
+  const r = c2d.getBoundingClientRect();
+  const px = e.clientX - r.left, py = e.clientY - r.top;
+  lastMouse2d = s2w(px, py);
+  if (panning && panLast) {
+    const dx = px - panLast.x, dy = py - panLast.y;
+    panLast = { x: px, y: py };
+    view.cx -= dx / view.scale;
+    view.cz -= dy / view.scale;
+    draw2D();
+    return;
+  }
+  if (dragPt >= 0) {
+    const w = s2w(px, py);
+    const p = state.points[dragPt];
+    p.x = snapPt(w.x);
+    p.z = snapPt(w.z);
+    resample();
+    draw2D();
+    refresh3D();
+    syncInspector();
+  } else {
+    drawStatus2D();
+  }
+});
+
+function end2dDrag() { dragPt = -1; panning = false; panLast = null; }
+c2d.addEventListener('pointerup', end2dDrag);
+c2d.addEventListener('pointercancel', end2dDrag);
+c2d.addEventListener('dblclick', (e) => {
+  const r = c2d.getBoundingClientRect();
+  const px = e.clientX - r.left, py = e.clientY - r.top;
+  const hi = hitTestPoint(px, py);
+  if (hi >= 0) removePoint(hi);
+});
+c2d.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const r = c2d.getBoundingClientRect();
+  const px = e.clientX - r.left, py = e.clientY - r.top;
+  const before = s2w(px, py);
+  view.scale *= Math.pow(1.0015, -e.deltaY);
+  view.scale = clamp(view.scale, 0.4, 80);
+  const after = s2w(px, py);
+  view.cx += before.x - after.x;
+  view.cz += before.z - after.z;
+  draw2D();
+}, { passive: false });
+
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.code === 'Delete' || e.code === 'Backspace') {
+    if (state.selected >= 0) { e.preventDefault(); removePoint(state.selected); }
+    else if (state.selectedObj >= 0) { e.preventDefault(); removeObj(state.selectedObj); }
+  }
+  if (e.code === 'Space') spaceDown = true;
+});
+window.addEventListener('keyup', (e) => { if (e.code === 'Space') spaceDown = false; });
+
+function removePoint(i) {
+  state.points.splice(i, 1);
+  state.selected = -1;
+  resample();
+  fitViewIfNeeded();
+  syncInspector();
+  refreshAll();
+}
+function removeObj(i) {
+  state.objects.splice(i, 1);
+  state.selectedObj = -1;
+  syncInspector();
+  refresh3D();
+}
+function placeObject(wx, wz) {
+  const x = snapPt(wx), z = snapPt(wz);
+  let y = 0;
+  if (state.samples.length) {
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < state.samples.length; i++) {
+      const s = state.samples[i];
+      const d = Math.hypot(s.x - x, s.z - z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (bd < state.halfWidth * 2.5) y = state.samples[best].y;
+  }
+  state.objects.push({ type: state.activeObj, x, y: r1(y), z, rot: 0, scale: 1 });
+  state.selectedObj = state.objects.length - 1;
+  state.selected = -1;
+  rebuildObjectMeshes();
+  syncInspector();
+  draw2D();
+}
+function fitViewIfNeeded() {
+  const r = c2d.getBoundingClientRect();
+  const wspan = (r.width) / view.scale;
+  const hspan = (r.height) / view.scale;
+  for (const p of state.points) {
+    if (Math.abs(p.x - view.cx) > wspan / 2 || Math.abs(p.z - view.cz) > hspan / 2) { fitView(); return; }
+  }
+}
+
+// tool toggle
+function setTool(t) {
+  state.tool = t;
+  document.querySelectorAll('#tool-toggle .tool-btn').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+}
+document.querySelectorAll('#tool-toggle .tool-btn').forEach(btn => {
+  btn.addEventListener('click', () => { setTool(btn.dataset.tool); });
+});
+function toggleGroup(id, key, onVal, offVal) {
+  const el = document.getElementById(id);
+  el.querySelectorAll('.toggle-opt').forEach(opt => opt.addEventListener('click', () => {
+    el.querySelectorAll('.toggle-opt').forEach(o => o.classList.toggle('active', o === opt));
+    state[key] = opt.dataset.val === onVal;
+    if (id === 'closed-toggle') { resample(); refreshAll(); }
+    draw2D();
+  }));
+}
+toggleGroup('snap-toggle', 'snap', 'on', 'off');
+toggleGroup('closed-toggle', 'closed', 'on', 'off');
+
+// ════════════════════════════════════════════════════════════════════════════
+//  3D ISOMETRIC VIEW
+// ════════════════════════════════════════════════════════════════════════════
+const tcanvas = document.getElementById('three-canvas');
+const renderer = new THREE.WebGLRenderer({ canvas: tcanvas, antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio || 1);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e0a1c);
+
+const FRUSTUM = 260;
+const camera = new THREE.OrthographicCamera(-FRUSTUM, FRUSTUM, FRUSTUM, -FRUSTUM, 0.1, 4000);
+camera.position.set(1, 1, 1).normalize().multiplyScalar(420);
+camera.up.set(0, 1, 0);
+camera.lookAt(0, 0, 0);
+
+const controls = new OrbitControls(camera, tcanvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+controls.zoomSpeed = 1.1;
+controls.target.set(0, 0, 0);
+
+const lights = [];
+lights.push(new THREE.AmbientLight(0xffffff, 0.75));
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.position.set(60, 120, 40);
+scene.add(sun);
+const fill = new THREE.DirectionalLight(0x8888ff, 0.35);
+fill.position.set(-60, 30, -60);
+scene.add(fill);
+
+const groundMesh = new THREE.Mesh(
+  new THREE.PlaneGeometry(2000, 2000),
+  new THREE.MeshLambertMaterial({ color: 0x1d1a33, side: THREE.DoubleSide })
+);
+groundMesh.rotation.x = -Math.PI / 2;
+groundMesh.position.y = -30;
+scene.add(groundMesh);
+
+const trackGroup = new THREE.Group();
+scene.add(trackGroup);
+const handlesGroup = new THREE.Group();
+scene.add(handlesGroup);
+const objectsGroup = new THREE.Group();
+scene.add(objectsGroup);
+const procgenGroup = new THREE.Group();
+scene.add(procgenGroup);
+
+function makeMat(color, emissive) {
+  return new THREE.MeshLambertMaterial({ color, emissive: emissive || 0x000000, side: THREE.DoubleSide });
+}
+const M = {
+  road: makeMat(0x9a9aa5),
+  roadEdge: makeMat(0x6a6a75),
+  start: makeMat(0xffffff, 0x222222),
+  point: makeMat(0xa08ace),
+  pointSel: makeMat(0xff9a2a, 0x331100),
+  elev: makeMat(0x4ad0ff, 0x002233),
+  bankRing: makeMat(0xffd27a, 0x332200),
+  bankMark: makeMat(0xffe27a, 0x553300),
+};
+
+function rebuildTrackGeometry() {
+  trackGroup.clear();
+  const S = state.samples;
+  const n = S.length;
+  if (n < 2) return;
+
+  const roadPos = [];
+  const edgePos = [];
+  const startPos = [];
+  for (let i = 0; i < n; i++) {
+    const a = S[i];
+    const b = S[(i + 1) % n];
+    const ca = ribbonCorners(a);
+    const cb = ribbonCorners(b);
+    roadPos.push(...ca.L, ...cb.L, ...cb.R);
+    roadPos.push(...ca.L, ...cb.R, ...ca.R);
+    for (const side of [-1, 1]) {
+      edgePos.push(
+        ...edgeCorner(a, side, 0.62), ...edgeCorner(b, side, 0.62),
+        ...edgeCorner(b, side, 0.9), ...edgeCorner(b, side, 0.9),
+        ...edgeCorner(a, side, 0.9), ...edgeCorner(a, side, 0.62),
+      );
+    }
+    if (i === 0) {
+      const c0 = ribbonCorners(S[n - 1]);
+      startPos.push(...ca.L, ...c0.L, ...c0.R);
+      startPos.push(...ca.L, ...c0.R, ...ca.R);
+    }
+  }
+  if (roadPos.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(roadPos, 3));
+    geo.computeVertexNormals();
+    trackGroup.add(new THREE.Mesh(geo, M.road));
+  }
+  if (edgePos.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(edgePos, 3));
+    geo.computeVertexNormals();
+    trackGroup.add(new THREE.Mesh(geo, M.roadEdge));
+  }
+  if (startPos.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(startPos, 3));
+    geo.computeVertexNormals();
+    trackGroup.add(new THREE.Mesh(geo, M.start));
+  }
+}
+function edgeCorner(s, side, f) {
+  const b = (s.bank || 0) * Math.PI / 180;
+  const cb = Math.cos(b), sb = Math.sin(b);
+  return [s.x + (s.px * cb) * side * s.hw * f, s.y + sb * side * s.hw * f, s.z + (s.pz * cb) * side * s.hw * f];
+}
+
+function tangentAtControl(i) {
+  const pts = state.points;
+  const n = pts.length;
+  if (n < 2) return { fx: 0, fz: 1 };
+  const p0 = pts[state.closed ? (i - 1 + n) % n : Math.max(0, i - 1)];
+  const p2 = pts[state.closed ? (i + 1) % n : Math.min(n - 1, i + 1)];
+  let fx = p2.x - p0.x, fz = p2.z - p0.z;
+  const l = Math.hypot(fx, fz) || 1;
+  return { fx: fx / l, fz: fz / l };
+}
+
+function rebuildHandles() {
+  handlesGroup.clear();
+  const pts = state.points;
+  const radius = Math.max(1.2, state.halfWidth * 0.14);
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const g = new THREE.Group();
+    g.position.set(p.x, p.y, p.z);
+    g.userData = { idx: i };
+
+    const sel = i === state.selected;
+    const sphere = new THREE.Mesh(
+      new THREE.SphereGeometry(sel ? radius * 0.55 : radius * 0.4, 12, 8),
+      sel ? M.pointSel : M.point
+    );
+    sphere.userData = { kind: 'point', idx: i };
+    g.add(sphere);
+
+    if (sel) {
+      // elevation arrow above
+      const ele = new THREE.Group();
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(radius * 0.16, radius * 0.16, radius * 1.6, 8), M.elev);
+      shaft.position.y = radius * 1.3;
+      const head = new THREE.Mesh(new THREE.ConeGeometry(radius * 0.28, radius * 0.6, 8), M.elev);
+      head.position.y = radius * 1.3 + radius * 0.6 + radius * 0.3;
+      ele.add(shaft, head);
+      ele.userData = { kind: 'elev', idx: i };
+      g.add(ele);
+
+      // bank ring oriented along tangent
+      const F = tangentAtControl(i);
+      const torus = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.35, radius * 0.14, 8, 24), M.bankRing);
+      torus.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), new THREE.Vector3(F.fx, 0, F.fz));
+      torus.userData = { kind: 'bank', idx: i };
+      g.add(torus);
+      // bank indicator marker (orbits the ring about the tangent axis)
+      const mark = new THREE.Mesh(new THREE.SphereGeometry(radius * 0.22, 8, 6), M.bankMark);
+      const b = (p.bank || 0) * Math.PI / 180;
+      const mr = radius * 1.35;
+      const mB = Math.cos(b) * mr;
+      mark.position.set(-F.fz * mB, Math.sin(b) * mr, F.fx * mB);
+      mark.userData = { kind: 'bank', idx: i };
+      g.add(mark);
+    }
+    handlesGroup.add(g);
+  }
+}
+
+// ---- object / scenery meshes ----
+const OBJ_MATERIALS = {};
+function objMat(color, emissive) {
+  const key = String(color) + '|' + String(emissive || 0);
+  if (!OBJ_MATERIALS[key]) OBJ_MATERIALS[key] = new THREE.MeshLambertMaterial({ color, emissive: emissive || 0x000000 });
+  return OBJ_MATERIALS[key];
+}
+
+function buildObjectMesh(type, opts = {}) {
+  const g = new THREE.Group();
+  const scale = opts.scale ?? 1;
+  const add = (geo, mat, x = 0, y = 0, z = 0) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    g.add(m);
+    return m;
+  };
+  switch (type) {
+    case 'barrier':
+      add(new THREE.BoxGeometry(2, 0.9, 0.3), objMat(0xd05050), 0, 0.45, 0);
+      add(new THREE.BoxGeometry(2, 0.15, 0.32), objMat(0xffffff), 0, 0.2, 0);
+      break;
+    case 'cone':
+      add(new THREE.ConeGeometry(0.5, 1, 6), objMat(0xff9a2a), 0, 0.5, 0);
+      add(new THREE.CylinderGeometry(0.05, 0.2, 0.2, 6), objMat(0x333333), 0, 0.1, 0);
+      break;
+    case 'boost':
+      add(new THREE.BoxGeometry(2.4, 0.18, 1.4), objMat(0x6ee86e, 0x224422), 0, 0.09, 0);
+      add(new THREE.BoxGeometry(2.0, 0.05, 1.0), objMat(0xb6ffb6, 0x66ff66), 0, 0.21, 0);
+      break;
+    case 'oil':
+      add(new THREE.CylinderGeometry(1.1, 1.1, 0.06, 16), objMat(0x2c2c38, 0x000000), 0, 0.03, 0);
+      break;
+    case 'ramp':
+      add(new THREE.BoxGeometry(3, 0.2, 2.2), objMat(0xc8b090), 0, 0.1, 0);
+      break;
+    case 'sign':
+      add(new THREE.CylinderGeometry(0.08, 0.1, 2.4, 6), objMat(0x88888f), 0, 1.2, 0);
+      add(new THREE.BoxGeometry(0.9, 0.7, 0.12), objMat(0x5aa8ff), 0, 2.5, 0);
+      break;
+    case 'light':
+      add(new THREE.CylinderGeometry(0.1, 0.14, 3.2, 6), objMat(0x55555e), 0, 1.6, 0);
+      add(new THREE.SphereGeometry(0.42, 10, 8), objMat(0xfff0b0, 0xffe27a), 0, 3.35, 0);
+      break;
+    case 'crate':
+      add(new THREE.BoxGeometry(1, 1, 1), objMat(0xb58a52), 0, 0.5, 0);
+      break;
+    case 'tree':
+      add(new THREE.CylinderGeometry(0.18, 0.28, 1.4, 6), objMat(0x6a4a2a), 0, 0.7, 0);
+      add(new THREE.ConeGeometry(1.0, 1.4, 7), objMat(0x2f7a2f), 0, 2.0, 0);
+      add(new THREE.ConeGeometry(0.72, 1.1, 7), objMat(0x48b048), 0, 2.7, 0);
+      break;
+    case 'rock':
+      add(new THREE.DodecahedronGeometry(0.9, 0), objMat(0x8a8a94), 0, 0.5, 0);
+      break;
+  }
+  g.scale.setScalar(scale);
+  return g;
+}
+
+function rebuildObjectMeshes() {
+  objectsGroup.clear();
+  for (let i = 0; i < state.objects.length; i++) {
+    const o = state.objects[i];
+    const m = buildObjectMesh(o.type, { scale: o.scale });
+    m.position.set(o.x, o.y, o.z);
+    m.rotation.y = (o.rot || 0) * Math.PI / 180;
+    objectsGroup.add(m);
+  }
+}
+
+function rebuildProcgen() {
+  procgenGroup.clear();
+  for (const d of state.procgen) {
+    const m = buildObjectMesh(d.kind, { scale: d.scale });
+    m.position.set(d.x, d.y, d.z);
+    m.rotation.y = (d.rot || 0) * Math.PI / 180;
+    procgenGroup.add(m);
+  }
+}
+
+// ---- 3D pointer interaction ----
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let drag3d = null; // { mode, idx, lastX, lastY }
+
+function setPointer(e) {
+  const r = tcanvas.getBoundingClientRect();
+  pointer.x = ((e.clientX - r.left) / r.width) * 2 - 1;
+  pointer.y = -((e.clientY - r.top) / r.height) * 2 + 1;
+}
+
+function pickHandle(e) {
+  setPointer(e);
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(handlesGroup.children, true);
+  for (const h of hits) {
+    const ud = h.object.userData;
+    if (ud && ud.kind) return ud;
+  }
+  return null;
+}
+
+function worldPerPx() {
+  const r = tcanvas.getBoundingClientRect();
+  return (FRUSTUM * 2 / (camera.zoom || 1)) / r.height;
+}
+
+function rayPlane(e, px, py, pz, nx, ny, nz) {
+  setPointer(e);
+  raycaster.setFromCamera(pointer, camera);
+  const plane = new THREE.Plane(new THREE.Vector3(nx, ny, nz), -(nx * px + ny * py + nz * pz));
+  const out = new THREE.Vector3();
+  raycaster.ray.intersectPlane(plane, out);
+  return out;
+}
+
+tcanvas.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  tcanvas.setPointerCapture(e.pointerId);
+  const ud = pickHandle(e);
+  if (!ud) { state.selected = -1; state.selectedObj = -1; syncInspector(); refreshHandlesOnly(); return; }
+  controls.enabled = false;
+  if (ud.kind === 'point') {
+    if (state.selected !== ud.idx) { state.selected = ud.idx; state.selectedObj = -1; syncInspector(); refreshHandlesOnly(); }
+    drag3d = { mode: 'move', idx: ud.idx, lastX: e.clientX, lastY: e.clientY };
+  } else if (ud.kind === 'elev') {
+    if (state.selected !== ud.idx) { state.selected = ud.idx; state.selectedObj = -1; syncInspector(); refreshHandlesOnly(); }
+    drag3d = { mode: 'elev', idx: ud.idx, lastX: e.clientX, lastY: e.clientY };
+  } else if (ud.kind === 'bank') {
+    if (state.selected !== ud.idx) { state.selected = ud.idx; state.selectedObj = -1; syncInspector(); refreshHandlesOnly(); }
+    drag3d = { mode: 'bank', idx: ud.idx, lastX: e.clientX, lastY: e.clientY };
+  }
+});
+
+tcanvas.addEventListener('pointermove', (e) => {
+  if (!drag3d) return;
+  const p = state.points[drag3d.idx];
+  if (drag3d.mode === 'elev') {
+    const dy = (e.clientY - drag3d.lastY) * worldPerPx();
+    drag3d.lastY = e.clientY;
+    p.y = clamp(p.y - dy, -30, 30);
+  } else if (drag3d.mode === 'move') {
+    const hit = rayPlane(e, p.x, p.y, p.z, 0, 1, 0);
+    if (hit) {
+      p.x = snapPt(hit.x);
+      p.z = snapPt(hit.z);
+    }
+  } else if (drag3d.mode === 'bank') {
+    const F = tangentAtControl(drag3d.idx);
+    const hit = rayPlane(e, p.x, p.y, p.z, F.fx, 0, F.fz);
+    if (hit) {
+      const vx = hit.x - p.x, vz = hit.z - p.z;
+      const r = (vx * -F.fz) + (vz * F.fx);
+      const up = vx * 0 + vz * 0; // handled below
+      const rU = vx * 0 + (hit.y - p.y);
+      let bank = Math.atan2(rU, r) * 180 / Math.PI;
+      p.bank = clamp(bank, -60, 60);
+    }
+  }
+  resample();
+  rebuildTrackGeometry();
+  rebuildHandles();
+  syncInspector();
+});
+
+function end3dDrag() { if (drag3d) { controls.enabled = true; drag3d = null; } }
+tcanvas.addEventListener('pointerup', end3dDrag);
+tcanvas.addEventListener('pointercancel', end3dDrag);
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PROCGEN MAP
+// ════════════════════════════════════════════════════════════════════════════
+function generateMap() {
+  state.procgen = [];
+  const rng = mulberry32(state.seed);
+  const S = state.samples;
+  const n = S.length;
+  if (n < 4) { refreshAll(); return; }
+  const out = [];
+  const density = state.density / 100;
+
+  // barriers along both edges
+  for (let i = 0; i < n; i += Math.max(4, Math.round(6 / density))) {
+    for (const side of [-1, 1]) {
+      const a = S[i];
+      const lat = a.hw + 1.7;
+      const x = a.x + a.px * lat * side;
+      const z = a.z + a.pz * lat * side;
+      const heading = Math.atan2(a.fx, a.fz) * 180 / Math.PI;
+      out.push({ kind: 'barrier', x: r2(x), y: r2(a.y), z: r2(z), rot: heading + (side > 0 ? 180 : 0), scale: 1 });
+    }
+  }
+  // street lights
+  for (let i = 0; i < n; i += Math.max(6, Math.round(14 / density))) {
+    for (const side of [-1, 1]) {
+      const a = S[i];
+      const lat = a.hw + 6;
+      const x = a.x + a.px * lat * side;
+      const z = a.z + a.pz * lat * side;
+      const heading = Math.atan2(a.fx, a.fz) * 180 / Math.PI;
+      out.push({ kind: 'light', x: r2(x), y: r2(a.y), z: r2(z), rot: heading + (side > 0 ? 180 : 0), scale: 1 });
+    }
+  }
+  // cones + signs + crates near the track
+  const sideCount = Math.floor(n * 0.35 * density);
+  for (let k = 0; k < sideCount; k++) {
+    const i = (rng() * n) | 0;
+    const a = S[i];
+    const side = rng() < 0.5 ? -1 : 1;
+    const lat = a.hw + 1.2 + rng() * 2.2;
+    const x = a.x + a.px * lat * side;
+    const z = a.z + a.pz * lat * side;
+    const heading = Math.atan2(a.fx, a.fz) * 180 / Math.PI;
+    const roll = rng();
+    const kind = roll < 0.5 ? 'cone' : roll < 0.68 ? 'sign' : roll < 0.86 ? 'crate' : 'cone';
+    out.push({ kind, x: r2(x), y: r2(a.y), z: r2(z), rot: heading + (side > 0 ? 180 : 0), scale: 0.9 + rng() * 0.3 });
+  }
+  // jump ramp on a low-curvature sample
+  for (let i = 0; i < n; i += Math.max(2, Math.round(n / 3))) {
+    const a = S[i];
+    const nxt = S[(i + 5) % n];
+    let dx = nxt.fx - a.fx, dz = nxt.fz - a.fz;
+    const curv = Math.hypot(dx, dz);
+    if (curv < 0.06) {
+      const heading = Math.atan2(a.fx, a.fz) * 180 / Math.PI;
+      out.push({ kind: 'ramp', x: r2(a.x), y: r2(a.y - 0.1), z: r2(a.z), rot: heading, scale: 1 });
+      break;
+    }
+  }
+  // scenery scatter (trees / rocks) off the apron
+  const decorCount = Math.floor(n * 0.8 * density);
+  for (let k = 0; k < decorCount; k++) {
+    const i = (rng() * n) | 0;
+    const a = S[i];
+    const side = rng() < 0.5 ? -1 : 1;
+    const lat = a.hw + 8 + rng() * 22;
+    const x = a.x + a.px * lat * side;
+    const z = a.z + a.pz * lat * side;
+    const kind = rng() < 0.6 ? 'tree' : 'rock';
+    const s = kind === 'tree' ? 1.1 + rng() * 1.3 : 0.7 + rng() * 1.2;
+    out.push({ kind, x: r2(x), y: r2(a.y), z: r2(z), rot: rng() * 360, scale: r1(s) });
+  }
+  state.procgen = out;
+  rebuildProcgen();
+  rebuildObjectMeshes();
+  syncProcgenList();
+  draw2D();
+}
+
+function syncProcgenList() {
+  const el = document.getElementById('procgen-list');
+  const counts = {};
+  for (const d of state.procgen) counts[d.kind] = (counts[d.kind] || 0) + 1;
+  const names = Object.keys(counts);
+  el.innerHTML = names.length
+    ? names.map(k => `<div class="pg-row"><b>${k}</b><span style="margin-left:auto;">×${counts[k]}</span></div>`).join('')
+    : '<div class="pg-row">No map generated.</div>';
+  document.getElementById('procgen-badge').textContent = state.procgen.length ? `${state.procgen.length} items` : '—';
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  INSPECTOR / CONTROLS WIRING
+// ════════════════════════════════════════════════════════════════════════════
+const $ = (id) => document.getElementById(id);
+let syncing = false;
+
+function syncInspector() {
+  if (syncing) return;
+  syncing = true;
+  $('hw-track').value = state.halfWidth;
+  $('hw-track-val').textContent = state.halfWidth;
+  $('sample-space').value = state.sampleSpace;
+  $('sample-space-val').textContent = state.sampleSpace;
+  $('len-val').textContent = `${Math.round(state.totalLen)} u · ${state.samples.length} samples`;
+  $('spline-badge').textContent = `${state.points.length} pts`;
+
+  const pi = state.selected;
+  if (pi >= 0 && pi < state.points.length) {
+    const p = state.points[pi];
+    $('point-y').value = p.y;
+    $('point-y-val').textContent = r1(p.y);
+    $('point-bank').value = p.bank || 0;
+    $('point-bank-val').textContent = `${Math.round(p.bank || 0)}°`;
+    $('point-hw').value = p.hw || 0;
+    $('point-hw-val').textContent = p.hw ? p.hw : 'auto';
+    $('point-pos').textContent = `${r2(p.x)}, ${r2(p.y)}, ${r2(p.z)}`;
+    $('point-badge').textContent = `#${pi}`;
+  } else {
+    $('point-y').value = 0; $('point-y-val').textContent = '—';
+    $('point-bank').value = 0; $('point-bank-val').textContent = '—';
+    $('point-hw').value = 0; $('point-hw-val').textContent = '—';
+    $('point-pos').textContent = '—';
+    $('point-badge').textContent = '— none —';
+  }
+
+  const oi = state.selectedObj;
+  if (oi >= 0 && oi < state.objects.length) {
+    const o = state.objects[oi];
+    $('obj-rot').value = o.rot || 0;
+    $('obj-rot-val').textContent = `${Math.round(o.rot || 0)}°`;
+    $('obj-scale').value = o.scale || 1;
+    $('obj-scale-val').textContent = (o.scale || 1).toFixed(2);
+    $('obj-y').value = o.y;
+    $('obj-y-val').textContent = r1(o.y);
+    $('obj-pos').textContent = `${r2(o.x)}, ${r2(o.y)}, ${r2(o.z)}`;
+    $('obj-badge').textContent = o.type;
+  } else {
+    $('obj-rot').value = 0; $('obj-rot-val').textContent = '—';
+    $('obj-scale').value = 1; $('obj-scale-val').textContent = '—';
+    $('obj-y').value = 0; $('obj-y-val').textContent = '—';
+    $('obj-pos').textContent = '—';
+    $('obj-badge').textContent = '— none —';
+  }
+
+  $('palette-badge').textContent = `active: ${state.activeObj}`;
+  document.querySelectorAll('.palette-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.type === state.activeObj);
+  });
+  syncing = false;
+}
+
+function bindRange(id, valId, fmt, fn) {
+  $(id).addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
+    if (valId) $(valId).textContent = fmt(v);
+    fn(v);
+  });
+}
+
+bindRange('hw-track', 'hw-track-val', v => v, (v) => { state.halfWidth = v; resample(); refreshAll(); });
+bindRange('sample-space', 'sample-space-val', v => v, (v) => { state.sampleSpace = v; resample(); refreshAll(); });
+bindRange('point-y', 'point-y-val', v => r1(v), (v) => { if (state.selected >= 0) { state.points[state.selected].y = v; resample(); refresh3D(); draw2D(); } });
+bindRange('point-bank', 'point-bank-val', v => `${Math.round(v)}°`, (v) => { if (state.selected >= 0) { state.points[state.selected].bank = v; resample(); refresh3D(); draw2D(); } });
+bindRange('point-hw', 'point-hw-val', v => v || 'auto', (v) => { if (state.selected >= 0) { state.points[state.selected].hw = v > 0 ? v : null; resample(); refresh3D(); draw2D(); } });
+bindRange('obj-rot', 'obj-rot-val', v => `${Math.round(v)}°`, (v) => { if (state.selectedObj >= 0) { state.objects[state.selectedObj].rot = v; rebuildObjectMeshes(); } });
+bindRange('obj-scale', 'obj-scale-val', v => v.toFixed(2), (v) => { if (state.selectedObj >= 0) { state.objects[state.selectedObj].scale = v; rebuildObjectMeshes(); } });
+bindRange('obj-y', 'obj-y-val', v => r1(v), (v) => { if (state.selectedObj >= 0) { state.objects[state.selectedObj].y = v; rebuildObjectMeshes(); } });
+bindRange('grid-step', 'grid-step-val', v => v, (v) => { state.grid = v; draw2D(); });
+bindRange('pg-density', 'pg-density-val', v => v, (v) => { state.density = v; });
+
+$('track-name').addEventListener('input', (e) => { state.name = e.target.value || 'my_track'; });
+$('pg-seed').addEventListener('input', (e) => { state.seed = parseInt(e.target.value, 10) || 0; });
+$('show-decor').addEventListener('change', (e) => { state.showDecor = e.target.checked; draw2D(); });
+$('export-decor').addEventListener('change', () => {});
+
+$('btn-insert').addEventListener('click', () => {
+  if (state.selected < 0) return;
+  const p = state.points[state.selected];
+  const np = { x: p.x, y: p.y, z: p.z + 4, bank: p.bank || 0, hw: p.hw };
+  state.points.splice(state.selected + 1, 0, np);
+  state.selected += 1;
+  resample(); refreshAll();
+});
+$('btn-delete-point').addEventListener('click', () => { if (state.selected >= 0) removePoint(state.selected); });
+$('btn-delete-obj').addEventListener('click', () => { if (state.selectedObj >= 0) removeObj(state.selectedObj); });
+$('btn-clear').addEventListener('click', () => {
+  state.points = []; state.objects = []; state.selected = -1; state.selectedObj = -1;
+  resample(); fitView(); refreshAll();
+});
+$('btn-fit').addEventListener('click', () => { fitView(); draw2D(); });
+$('btn-iso').addEventListener('click', () => {
+  camera.position.copy(new THREE.Vector3(1, 1, 1).normalize().multiplyScalar(420));
+  camera.up.set(0, 1, 0);
+  controls.target.set(0, 0, 0);
+  controls.update();
+});
+$('btn-sample').addEventListener('click', () => { sampleRing(); });
+$('btn-generate').addEventListener('click', () => { generateMap(); refresh3D(); });
+$('btn-clear-map').addEventListener('click', () => { state.procgen = []; rebuildProcgen(); syncProcgenList(); draw2D(); });
+
+function sampleRing() {
+  const rng = mulberry32((Date.now() & 0x7fffffff) || 1);
+  const n = 10 + ((rng() * 4) | 0);
+  state.points = [];
+  const radius = 70 + rng() * 50;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const rr = radius * (0.82 + rng() * 0.36);
+    state.points.push({ x: Math.cos(a) * rr, y: 0, z: Math.sin(a) * rr, bank: 0, hw: null });
+  }
+  state.closed = true;
+  document.querySelectorAll('#closed-toggle .toggle-opt').forEach(o => o.classList.toggle('active', o.dataset.val === 'on'));
+  state.selected = -1;
+  resample(); fitView(); refreshAll();
+  generateMap();
+}
+
+// palette UI
+function buildPalette() {
+  const grid = $('palette-grid');
+  grid.innerHTML = '';
+  for (const def of PALETTE) {
+    const el = document.createElement('div');
+    el.className = 'palette-item' + (def.type === state.activeObj ? ' active' : '');
+    el.dataset.type = def.type;
+    el.innerHTML = `<div class="palette-swatch" style="background:${def.color}"></div><div class="palette-name">${def.name}</div>`;
+    el.addEventListener('click', () => {
+      state.activeObj = def.type;
+      setTool('place');
+      syncInspector();
+      $('status-3d').textContent = `palette: ${def.name} — click 2D view to place (grid ${state.grid}u)`;
+    });
+    grid.appendChild(el);
+  }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  EXPORT / LOAD
+// ════════════════════════════════════════════════════════════════════════════
+function exportData() {
+  return {
+    _version: 1,
+    kind: 'spline-track',
+    name: state.name,
+    closed: state.closed,
+    halfWidth: state.halfWidth,
+    sampleSpace: state.sampleSpace,
+    grid: state.grid,
+    controlPoints: state.points.map(p => ({
+      x: r2(p.x), y: r2(p.y), z: r2(p.z),
+      bank: Math.round((p.bank || 0) * 10) / 10,
+      hw: p.hw || null,
+    })),
+    objects: state.objects.map(o => ({
+      type: o.type, x: r2(o.x), y: r2(o.y), z: r2(o.z),
+      rot: Math.round((o.rot || 0) * 10) / 10, scale: r2(o.scale || 1),
+    })),
+    procgen: {
+      seed: state.seed,
+      density: state.density,
+      scenery: $('export-decor').checked ? state.procgen : [],
+    },
+    meta: { exported: new Date().toISOString() },
+  };
+}
+
+function download(name, text, mime) {
+  const blob = new Blob([text], { type: mime || 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+$('btn-export').addEventListener('click', () => {
+  const json = JSON.stringify(exportData(), null, 2);
+  download(`${state.name.replace(/\s+/g, '_')}.track.json`, json);
+  $('export-size').textContent = `${json.length} bytes`;
+});
+$('btn-copy').addEventListener('click', async () => {
+  const json = JSON.stringify(exportData(), null, 2);
+  try { await navigator.clipboard.writeText(json); $('export-size').textContent = 'copied'; }
+  catch (e) { $('export-size').textContent = 'copy failed'; }
+});
+$('load-input').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (data.kind !== 'spline-track' && !data.controlPoints) throw new Error('not a spline track');
+      state.name = data.name || 'my_track';
+      state.closed = data.closed !== false;
+      state.halfWidth = data.halfWidth || 7;
+      state.sampleSpace = data.sampleSpace || 3.2;
+      state.grid = data.grid || 4;
+      state.points = Array.isArray(data.controlPoints)
+        ? data.controlPoints.map(p => ({ x: p.x || 0, y: p.y || 0, z: p.z || 0, bank: p.bank || 0, hw: p.hw || null }))
+        : [];
+      state.objects = Array.isArray(data.objects)
+        ? data.objects.map(o => ({ type: o.type, x: o.x || 0, y: o.y || 0, z: o.z || 0, rot: o.rot || 0, scale: o.scale || 1 }))
+        : [];
+      state.procgen = Array.isArray(data.procgen?.scenery) ? data.procgen.scenery : [];
+      state.seed = data.procgen?.seed ?? 1337;
+      state.density = data.procgen?.density ?? 50;
+      $('track-name').value = state.name;
+      $('pg-seed').value = state.seed;
+      $('pg-density').value = state.density;
+      $('pg-density-val').textContent = state.density;
+      document.querySelectorAll('#closed-toggle .toggle-opt').forEach(o =>
+        o.classList.toggle('active', o.dataset.val === (state.closed ? 'on' : 'off')));
+      resample(); fitView(); rebuildObjectMeshes(); rebuildProcgen(); syncProcgenList(); refreshAll();
+      $('export-size').textContent = 'loaded';
+    } catch (err) {
+      $('export-size').textContent = 'load failed';
+    }
+  };
+  reader.readAsText(f);
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  REFRESH / RENDER LOOP
+// ════════════════════════════════════════════════════════════════════════════
+function refreshAll() {
+  resample();
+  draw2D();
+  rebuildTrackGeometry();
+  rebuildHandles();
+  rebuildObjectMeshes();
+  rebuildProcgen();
+  syncInspector();
+  syncProcgenList();
+}
+function refresh3D() {
+  rebuildTrackGeometry();
+  rebuildHandles();
+  rebuildObjectMeshes();
+  rebuildProcgen();
+  syncInspector();
+}
+function refreshHandlesOnly() {
+  rebuildHandles();
+  syncInspector();
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+function resize3D() {
+  const r = tcanvas.getBoundingClientRect();
+  if (r.width === 0 || r.height === 0) return;
+  renderer.setSize(r.width, r.height);
+  const aspect = r.width / r.height;
+  camera.left = -FRUSTUM * aspect;
+  camera.right = FRUSTUM * aspect;
+  camera.top = FRUSTUM;
+  camera.bottom = -FRUSTUM;
+  camera.updateProjectionMatrix();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════════════════════════
+buildPalette();
+sampleRing();
+window.addEventListener('resize', () => { resize2D(); resize3D(); });
+new ResizeObserver(() => { resize2D(); resize3D(); }).observe(document.getElementById('top-row'));
+resize2D();
+resize3D();
+animate();
+</script>
+</body>
+</html>
