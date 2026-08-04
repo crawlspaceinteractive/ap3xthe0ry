@@ -5,6 +5,10 @@ low-res `ImageData` buffer — no WebGL for visuals (Three.js is used only to
 parse GLB files). A frozen-yogurt hero double-jumps and glides across floating
 islands, freezing sun enemies with ice breath.
 
+## Run Online
+
+https://crawlspaceinteractive.github.io/ap3xthe0ry/
+
 ## Run locally
 
 ```bash
