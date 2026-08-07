@@ -69,6 +69,10 @@ export class RacerGame {
     this.track = buildTrack();
     this.vehicle = createVehicle(this.track);
     this.cam = createChaseCam(this.vehicle);
+    this.fullscreenTarget = (typeof document !== "undefined") ?
+      document.getElementById("froyo-shell") || canvas : null;
+    this._onRawKeyDown = this._onRawKeyDown.bind(this);
+    if (typeof window !== "undefined") window.addEventListener("keydown", this._onRawKeyDown);
     this.tex = { road: null, grass: null };
     this.fx = null;           // FX billboard sprites (flare / lightray / smoke)
     this.mesh = null;          // prepared vehicle mesh
@@ -105,7 +109,31 @@ export class RacerGame {
   stop() {
     this._running = false;
     cancelAnimationFrame(this._raf);
+    if (typeof window !== "undefined") window.removeEventListener("keydown", this._onRawKeyDown);
     this.input.destroy();
+  }
+
+  _onRawKeyDown(e) {
+    if (e.code === "KeyF") {
+      this.toggleFullscreen();
+    }
+  }
+
+  isFullscreen() {
+    if (typeof document === "undefined") return false;
+    const active = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+    return active === this.fullscreenTarget;
+  }
+
+  toggleFullscreen() {
+    if (typeof document === "undefined" || !this.fullscreenTarget) return;
+    if (this.isFullscreen()) {
+      const exit = document.exitFullscreen || document.mozCancelFullScreen || document.webkitExitFullscreen || document.msExitFullscreen;
+      exit?.();
+    } else {
+      const request = this.fullscreenTarget.requestFullscreen || this.fullscreenTarget.mozRequestFullScreen || this.fullscreenTarget.webkitRequestFullscreen || this.fullscreenTarget.msRequestFullscreen;
+      request?.();
+    }
   }
 
   async _load() {
@@ -209,7 +237,7 @@ export class RacerGame {
 
   _tickPause() {
     const inp = this.input;
-    const ROWS = 3; // 0=Resume, 1=SFX Vol, 2=Music Vol
+    const ROWS = 4; // 0=Resume, 1=SFX Vol, 2=Music Vol, 3=Fullscreen
 
     const startPressed = inp.justPressed(BTN_FLAGS.START);
     const aPressed = inp.justPressed(BTN_FLAGS.A);
@@ -236,6 +264,11 @@ export class RacerGame {
       return;
     }
 
+    if (aPressed && this._pauseRow === 3) {
+      this.toggleFullscreen();
+      return;
+    }
+
     // Slider adjust with auto-repeat (A/D or left stick)
     const hDir = axX > 0.4 ? 1 : axX < -0.4 ? -1 : 0;
     hDir !== 0 ? this._settingsHeld++ : (this._settingsHeld = 0);
@@ -243,7 +276,7 @@ export class RacerGame {
                  this._settingsHeld === 1 ||
                  (this._settingsHeld > 20 && this._settingsHeld % 5 === 0);
 
-    if (fire && hDir !== 0 && this._pauseRow > 0) {
+    if (fire && hDir !== 0 && this._pauseRow > 0 && this._pauseRow < 3) {
       const step = 0.05;
       const v = racerSound.getVolumes();
       if (this._pauseRow === 1) {
@@ -450,7 +483,7 @@ export class RacerGame {
       drawRacerHUD(rd, v, this.frame, this.hudFonts, this.place, this.track, this.lapTimer);
       if (this.state === "PAUSE") {
         const vols = racerSound.getVolumes();
-        drawPause(rd, this._pauseRow, vols.sfx, vols.music, this.hudFonts);
+        drawPause(rd, this._pauseRow, vols.sfx, vols.music, this.hudFonts, this.isFullscreen());
       }
     }
 

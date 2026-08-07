@@ -428,7 +428,7 @@ export function drawTitle(rd, frame, fonts) {
   }
 }
 
-export function drawPause(rd, pauseRow, sfxVol, musicVol, fonts) {
+export function drawPause(rd, pauseRow, sfxVol, musicVol, fonts, fullscreen) {
   const W = 280, H = 190;
   const px = (SCREEN_W - W) >> 1;
   const py = (SCREEN_H - H) >> 1;
@@ -441,6 +441,8 @@ export function drawPause(rd, pauseRow, sfxVol, musicVol, fonts) {
   const SLIDER_BG  = rgba(50, 40, 70);
   const SLIDER_FILL = rgba(100, 220, 180);
   const SLIDER_DIM  = rgba(60, 150, 120);
+  const CHECK_BG = rgba(30, 24, 52);
+  const CHECK_BORDER = rgba(120, 240, 200);
 
   drawRect(rd, px, py, W, H, PANEL);
   drawRect(rd, px, py, W, H, ACCENT, false);
@@ -459,10 +461,13 @@ export function drawPause(rd, pauseRow, sfxVol, musicVol, fonts) {
     { label: "RESUME" },
     { label: "SFX VOL",  val: sfxVol  },
     { label: "MUSIC VOL", val: musicVol },
+    { label: "FULLSCREEN", checked: fullscreen },
   ];
 
   const SX = px + 12;
   const SW = 180;
+  const CHECK_SIZE = 14;
+  const CHECK_X = SX + SW + 8;
   let ry = py + 38;
   for (let i = 0; i < items.length; i++) {
     const s = i === pauseRow;
@@ -483,12 +488,23 @@ export function drawPause(rd, pauseRow, sfxVol, musicVol, fonts) {
       if (useSprite) drawBodyText(rd, fonts, pctStr, SX + SW + 4, sy, 14, s ? SEL : DIM, 0);
       else drawText(rd, pctStr, SX + SW + 4, sy, s ? SEL : DIM, 2);
       ry += 40;
+    } else if (items[i].checked !== undefined) {
+      const cy = ry + 8;
+      drawRect(rd, CHECK_X, cy, CHECK_SIZE, CHECK_SIZE, CHECK_BG, true);
+      drawRect(rd, CHECK_X, cy, CHECK_SIZE, CHECK_SIZE, CHECK_BORDER, false);
+      if (items[i].checked) {
+        const chkA = CHECK_X + 3;
+        const chkB = cy + CHECK_SIZE - 4;
+        drawLine(rd, chkA, cy + 6, chkA + 4, chkB, SEL);
+        drawLine(rd, chkA + 4, chkB, chkA + 10, cy + 4, SEL);
+      }
+      ry += 40;
     } else {
       ry += 40;
     }
   }
 
-  const hint = "W/S:SEL  A/D:ADJ  SPC:BACK";
+  const hint = "W/S:SEL  A/D:ADJ  F:FULL  SPC:BACK";
   if (useSprite) {
     const hw = measureBodyText(fonts, hint, 12, 1);
     drawBodyText(rd, fonts, hint, px + ((W - hw) >> 1), py + H - 15, 12, DIM, 1);
