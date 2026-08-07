@@ -1,8 +1,10 @@
-# CHANGELOG — Froyo / Crawlspace Engine
+# CHANGELOG — ap3xthe0ry
 
 APPEND-ONLY. Never rewrite or delete old entries; add new entries at the BOTTOM.
 Each entry: date-less session tag, what changed, why, and files touched.
 Purpose: full history of changes & fixes so regressions can be traced.
+This changelog includes legacy history from earlier engine work, but the current
+active project is the racer build in `racer/`.
 
 ---
 
