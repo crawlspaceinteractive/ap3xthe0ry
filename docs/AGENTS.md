@@ -1,7 +1,7 @@
-# ap3xthe0ry — AGENT DEVELOPMENT MANUAL
+# CRAWLSPACE ENGINE — AGENT DEVELOPMENT MANUAL
 
 ## Purpose
-This document exists to guide future AI agents, contributors, and developers working on the ap3xthe0ry arcade racer repository.
+This document exists to guide future AI agents, contributors, and developers working on Crawlspace Engine.
 
 Its purpose is simple:
 
@@ -15,27 +15,31 @@ This document should be read before making architectural recommendations, refact
 
 ---
 
-# What ap3xthe0ry Is
-ap3xthe0ry is a retro-style CPU-rendered arcade racer repository built on a lightweight software rendering engine.
+# What Crawlspace Engine Is
+Crawlspace Engine is a content-focused retro 3D game engine and development platform.
 
 It is designed around:
 
 - Rapid game development
+- Genre portability
 - Asset portability
-- Minimal runtime complexity
-- Retro rendering aesthetics
+- Modding-inspired workflows
 - Deterministic systems
+- Retro rendering aesthetics
+- Minimal runtime complexity
 
-The repository is intended to support the active racer project while preserving legacy engine material for reference.
+The engine is intended to support multiple game genres without requiring a new engine architecture for each project.
 
 Examples include:
 
-- Arcade racing gameplay
-- Track spline physics
-- Drift and boost mechanics
-- Retro HUD and audio
+- FPS projects
+- Platformers
+- Puzzle games
+- Beat-em-ups
+- Procedural world projects
+- Experimental prototypes
 
-Changing features should primarily involve content, assets, data, and gameplay logic rather than rebuilding the rendering engine.
+Changing genres should primarily involve changing content, assets, data, and gameplay logic rather than rebuilding the engine.
 
 ---
 
@@ -82,7 +86,7 @@ Above:
 - Framework conformity
 
 ## Content Portability Matters
-One of the core goals of ap3xthe0ry is:
+One of the core goals of Crawlspace is:
 
 Build content once.
 
@@ -224,7 +228,7 @@ Do not fix the project.
 ---
 
 # Architecture Rule
-ap3xthe0ry is not required to resemble:
+Crawlspace is not required to resemble:
 
 - Unity
 - Unreal
