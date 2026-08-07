@@ -1,7 +1,7 @@
-# CRAWLSPACE ENGINE — AGENT DEVELOPMENT MANUAL
+# ap3xthe0ry — AGENT DEVELOPMENT MANUAL
 
 ## Purpose
-This document exists to guide future AI agents, contributors, and developers working on Crawlspace Engine.
+This document exists to guide future AI agents, contributors, and developers working on the ap3xthe0ry arcade racer repository.
 
 Its purpose is simple:
 
@@ -15,31 +15,27 @@ This document should be read before making architectural recommendations, refact
 
 ---
 
-# What Crawlspace Engine Is
-Crawlspace Engine is a content-focused retro 3D game engine and development platform.
+# What ap3xthe0ry Is
+ap3xthe0ry is a retro-style CPU-rendered arcade racer repository built on a lightweight software rendering engine.
 
 It is designed around:
 
 - Rapid game development
-- Genre portability
 - Asset portability
-- Modding-inspired workflows
-- Deterministic systems
-- Retro rendering aesthetics
 - Minimal runtime complexity
+- Retro rendering aesthetics
+- Deterministic systems
 
-The engine is intended to support multiple game genres without requiring a new engine architecture for each project.
+The repository is intended to support the active racer project while preserving legacy engine material for reference.
 
 Examples include:
 
-- FPS projects
-- Platformers
-- Puzzle games
-- Beat-em-ups
-- Procedural world projects
-- Experimental prototypes
+- Arcade racing gameplay
+- Track spline physics
+- Drift and boost mechanics
+- Retro HUD and audio
 
-Changing genres should primarily involve changing content, assets, data, and gameplay logic rather than rebuilding the engine.
+Changing features should primarily involve content, assets, data, and gameplay logic rather than rebuilding the rendering engine.
 
 ---
 
@@ -86,7 +82,7 @@ Above:
 - Framework conformity
 
 ## Content Portability Matters
-One of the core goals of Crawlspace is:
+One of the core goals of ap3xthe0ry is:
 
 Build content once.
 
@@ -228,7 +224,7 @@ Do not fix the project.
 ---
 
 # Architecture Rule
-Crawlspace is not required to resemble:
+ap3xthe0ry is not required to resemble:
 
 - Unity
 - Unreal
