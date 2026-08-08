@@ -15,7 +15,7 @@ const RUMBLE_DIST_SQ = 120 * 120;
 const GRASS_DIST_SQ  = 90 * 90;
 const WALL_H         = 1.7;
 const RUMBLE_W       = 0.9;
-const GRASS_W        = 9.0;
+const GRASS_W        = 16.0;
 
 const ROAD_TINT   = rgba(230, 230, 232);
 const GRASS_TINT  = rgba(215, 235, 210);

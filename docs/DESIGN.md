@@ -1,210 +1,91 @@
-# Froyo Engine — Design Document
+# AP3X THE0RY — Design Document
 
 ## Concept
-A PS1-style 3D platformer where a frozen-yogurt character hops between floating
-islands in a candy-colored sky, freezing sun enemies with ice breath and
-collecting crystals to open a portal to the next world.
+A PS1-style software-rasterized arcade racer. A fast, drifting vehicle laps a
+closed spline track suspended over a neon summit: layered parallax fuji-sky,
+boot cinematic title, steel-numeral HUD, and a shuffle soundtrack. Built on
+the shared Crawlspace engine.
 
 ## Core Mechanic
-Double-jump + glide traversal across a procedurally generated ring of islands.
-Ice-breath weapon freezes, then shatters enemies. Boss on the farthest island
-requires three freeze-thaw cycles to defeat.
+High-speed cornering built around the drift: hold drift + steer to swing the
+rear out, charge tiers while sliding, release to bank a boost. Steering is
+speed-sensitive, walls bounce with speed loss, ramps auto-boost off the lip,
+and the lap clock is tracked exactly along the closed track spline.
 
 ## Art Style
-320×200 software-rasterized canvas; intentional PS1 vertex-jitter, Bayer
-4×4 dither, 15-bit color quantization, distance fog. GLB models for characters
-and islands; pure-JS geometry builders for decorations, bridges, and the void
-plane. Palette: candy pastels, rich jewel-tone sky, warm orange/brown earth.
+320x240 internal software-rasterized framebuffer, upscaled 2x + dithered onto
+a 640x480 canvas. PS1 vertex jitter, Bayer 4x4 dither, 15-bit color
+quantization, distance fog. The vehicle is a user-authored GLB; terrain,
+track, and sky are pure-JS geometry. Palette: deep violet night, magenta
+accents, orange UI glow, steel-blue numerals.
 
 ---
 
-## Design Decisions
+## Design decisions
 
-### Rendering Architecture
-- **Full CPU software rasterizer** — no WebGL for visuals. All rendering writes
-  directly into a `320×200 Uint32Array` (`ImageData` buffer) then
-  `putImageData` to a 2D canvas at the end of each frame. This is a deliberate
-  authenticity choice: real PS1 rendering was CPU-driven.
-- **Two distinct geometry pipelines**:
-  - *Procedural builder path* (`renderer.js`) — cubes, trapezoids, triangular
-    prisms, oriented planks, billboards. Pure JS math, zero allocations in the
-    hot loop.
-  - *GLB mesh path* (`geometry.js`) — used for the player, enemies, boss, sun,
-    cherry, bridges, and island models. Three.js is imported *only* for parsing
-    `.glb` files; it is never used for projection or rendering.
-- **Engine-native projection for GLB models** — `buildMeshTris` re-implements
-  the same `toCameraSpace + scaleAtX/Y` transform used by the procedural path.
-  This guarantees GLB geometry lands exactly where the procedural geometry does.
-  (An earlier approach used `vector.project(threeCamera)` which caused a subtle
-  but visible mismatch.)
-- **`syncThreeCamera()` removed from per-frame path** — it was computing full
-  Three.js projection matrices every frame even after the switch to engine-native
-  projection. Kept as a no-op for API compatibility.
-- **Island geometry precache** (`precacheIslandColors` / `buildMeshTrisFromCache`)
-  — For static islands, color decisions (green top, brown gradient sides) and
-  yaw+scale vertex transforms are pre-computed once into a `Float32Array` of
-  10 floats per triangle. Per-frame rendering then only does camera-space
-  transform + near-plane clip, cutting the per-island per-frame work
-  significantly.
-- **Per-island frustum pre-cull** — a dot-product check against camera forward
-  skips all triangle work for islands clearly behind the camera.
-- **Distance cull**: GLB islands beyond 180 world units are skipped entirely.
-- **Depth sort** (`tris.sort()`) applied before rasterization so painter's
-  algorithm correctly orders overlapping transparent-ish geometry; the per-pixel
-  depth buffer handles the common opaque case.
-- **Fixed-point arithmetic** — renderer scanline loop and physics accumulation
-  both use 16.16 fixed-point integers. JS engines JIT these to native integer
-  ops, avoiding float rounding noise and GC pressure in the hot path.
-- **PS1 aesthetic**: integer vertex snap (vertex jitter), Bayer 4×4 dither,
-  15-bit color quantization at pixel write, distance fog blending toward a
-  lavender `FOG_COLOR`.
+### Rendering (shared engine)
+- CPU software rasterizer only - no WebGL. All pixels write into a
+  Uint32Array framebuffer (ImageData) behind 2D canvases.
+- Two geometry paths: procedural builders (renderer.js) and GLB meshes
+  (geometry.js; Three.js used only to decode .glb).
+- buildMeshTris uses the same projection math as the procedural path.
+- Depth-buffered painter's draw; 16.16 fixed-point scanlines; PS1 dither,
+  vertex snap, 15-bit quantize, distance fog.
 
-### Color Modes (geometry.js `buildMeshTris`)
-Each GLB object uses a named `colorMode` to control how its triangles are
-shaded, overriding or supplementing the model's own vertex colors:
+### Asset pipeline
+Assets are tracked in nested Git folders under assets/ but served from a
+flat CDN bucket. engine/asseturls.js maps each basename to its CDN UUID;
+assetUrl() strips the directory. The shim keeps all 163 racer assets
+verifiable 1:1 against the flat bucket. Unknown names pass through.
 
-| Mode | Usage | Effect |
-|---|---|---|
-| `"froyo"` | Player | Bottom half forced orange (#FF8C00); top uses vertex colors |
-| `"flatRed"` | Cherry | Every triangle solid red, lit by face normal |
-| `"sunVertex"` | Sun enemy + boss | Uses GLB vertex colors; bright triangles blended toward vivid yellow; dark triangles (sunglasses) kept dark (brightness threshold 0.35) |
-| `"flatYellow"` | (legacy sun) | Flat yellow — replaced by `sunVertex` |
-| `"flatBrown"` | Bridge GLB | Warm brown (160,100,50) — uniform on all faces |
-| `"island"` | Island GLBs | Face-normal Y > 0.55 → flat green; otherwise gradient chocolate-brown (bottom) to sandy-brown (top) |
-| `"skyDome"` | SkyDome GLB | Y-gradient orange (bottom/horizon) → purple (top) |
-| `"skyRing"` | SkyboxRing GLB | Flat lit purple, parallax-rotates with camera yaw |
-| `"sunZone"` | (experimental) | Yellow inside bounding sphere, black on rays |
+### Vehicle (racer/vehicle.js)
+- Arcade drift model with speed-sensitive steering, handbrake drift,
+  tiered boost charge, wall bounce with sticky drag, ramp lips, flips,
+  respawn on fall-off.
 
-**Why `sunVertex` over `flatYellow`**: The sun model encodes sunglasses,
-pupils, and face detail as dark vertex-colored triangles. `flatYellow` overwrote
-everything, destroying those features. `sunVertex` reads the actual vertex
-colors and applies a brightness gate so dark triangles stay dark while the sun
-body is pushed toward vivid yellow.
+### Track (racer/track.js)
+- Closed Catmull-Rom loop sampled once for physics AND rendering, so the
+  drawn road equals the drivable road. Ramp/gap flags per sampled point.
 
-### Island System
-- **7 user-provided GLB island models** (A–G) are loaded by `islandatlas.js`.
-  Each is auto-scaled to fit a 22×22 world-unit footprint (`TARGET_HALF_W/D`).
-- **Mixed island generation**: 6 of 16 `SHAPE_BUILDERS` slots are `shapeGLBModel`
-  (dominant); the remaining slots are procedural shapes (slab, pillar, stepped,
-  L-shape, ledge-stack, trapezoid, crescent, cross) which serve as variety and
-  as a graceful fallback if GLB loading fails.
-- **Overlap guard**: before placing each island, the generator checks a
-  footprint registry (`placedIslands`) and retries up to 4 times to avoid
-  islands stacking. Minimum separation: 6 world units between edges.
-- **Rotation pool**: `usedGLBModels` Set prevents the same GLB model appearing
-  twice in a row; the oldest half of the set is cleared once it exceeds half
-  the pool size.
+### HUD / fonts (racer/)
+- Sprite numeral + smallfont glyphs with tight advance metrics. Small
+  digits are the 32x42 speedometer set; big digits are the 64x82 position
+  set; ordinals on position. Drawn after the 3D pass.
 
-### Collision System
-- **GLB face collision** (narrow-phase) in `physics.js`:
-  - Broad-phase AABB first (halfW/halfD/topY) to skip distant islands cheaply.
-  - Narrow-phase iterates every triangle in the model's pre-scaled `faces`
-    Float32Array (built once by `islandatlas.js`).
-  - **Landing surfaces** (face normal Y > 0.25): barycentric interpolation on
-    the XZ plane finds the exact face Y under the player's feet. Tight epsilon
-    (±0.005) prevents sliding off edges.
-  - **Vertical walls** (|normalY| < 0.65): plane-distance push-out with a
-    slightly wider barycentric tolerance (±0.15) so the player doesn't clip
-    through wall faces.
-- **Procedural block collision** uses AABB (`testAABB`) with a separate
-  top-landing and side push-out path.
-- **One-way platforms** (Phase 1.3): `p.oneWay` / `b.oneWay` flag on a platform
-  or block makes it solid only from above — landing requires the player's feet
-  to have been above the top on the previous frame (`playerBottom - vy` gate);
-  side push-out and head-bonk are skipped so the player can jump up through it.
-  Bridge planks are generated with `oneWay: true`.
-- Moving platforms carry the player by recording `dvx`/`dvz` deltas;
-  `stepMovingPlatforms` is called each tick before physics.
+### Audio (racer/racersound.js)
+- Shuffled 22-track playlist + engine/screech loops + crash/land/boost/
+  tier blips; 1s rev with fade-out.
 
-### World Generation
-- **Deterministic PRNG** — Mulberry32 seeded per world. Identical seed always
-  produces identical layout.
-- **Two-ring layout** — ring 1 (5–7 islands, 40–72 world units out) and ring 2
-  (4–6 islands, 80–120 units out). All gameplay content is in the rings; the
-  parent island is a hub.
-- **Parent island** — 3-tier stepped structure (base → mid → top). Player
-  spawns on the base top. Portal lives at the apex.
-- **Boss placement** — one boss enemy (6 HP, 3-shot spread) is placed on the
-  farthest ring-2 island. Regular enemies (2 HP) appear on every 3rd ring-2
-  island.
-- **Biome palettes** — 6 biomes (grass, ice, sand, bubblegum, jungle, golden)
-  cycle by island index. Each biome gets type-matched decorations (e.g. ice →
-  spires + gemstones; jungle → pine + tree).
-- **Moving platforms** — block-based islands on ring 2 can oscillate on X or Z
-  axis. Moving is disabled for GLB model islands (face collision and moving
-  platforms conflict; would require per-frame face retransform).
-- **Wind zones** — placed between every 3rd island pair; push airborne player
-  laterally. Visual swirl particles mark the zone.
-- **Bridge pass** — runs after island placement. All island pairs within
-  `BRIDGE_MAX_GAP` (80 units) and `BRIDGE_MAX_YDIFF` (24 units) get an arc of
-  oriented planks. Bridge endpoints are pulled to the island edge (not center)
-  to avoid clipping the GLB geometry.
-- **Magnetization pass** (`meshweld.js`) — after layout, nearby block-island
-  edges are nudged toward each other so they visually connect. Applied before
-  physics platforms are finalized.
+### Menus (racer/menus.js)
+- MenuController owns MAIN / CONTROLS / OPTIONS / BINDINGS / ABOUT.
+- Pause is a menu mode (enterPause) with the same sliders/bindings as
+  Options; QUIT rebuilds the vehicle and returns to MENU.
 
-### Loading Screen
-- Dual-phase loading: **bar 1** fills as the 7 island GLBs download (sequential
-  fetch, one at a time); **bar 2** fills as the geometry color cache is
-  pre-baked (`precacheIslandColors` called for each loaded model). A bouncing
-  Froyo sprite annotates the loading screen.
-- The two-phase design means bar 2 is at 0% during the download phase — a known
-  UX quirk; a unified single bar blending (60% download + 40% bake) would be
-  cleaner.
+---
 
-### Camera System
-- Third-person orbit: camera follows player position with lerp, maintains a
-  fixed distance and height offset.
-- Pitch auto-adjusts toward a target based on player vertical velocity (look up
-  on ascent, down on descent).
-- `castLookRay` — used for look-at targeting (not yet wired to gameplay).
-- SkyDome + SkyboxRing rotate with `camera.yaw * parallelFactor` to create a
-  cheap parallax sky illusion.
+## Design decisions kept from the platformer era (game/)
 
-### Jump System
-- `jumpTokens: 2` (grounded) → `1` (first jump) → `0` (double jump).
-- Token gate is in `physics.js` checking the count directly; state-flag checks
-  alone caused an infinite-jump bug in an earlier version.
-- Glide (`STATE.GLIDE`) is armed separately by `_glideArmed` latch after both
-  tokens are spent; uses a reduced gravity row in `PHYSICS_LUT`.
-- Floaty ascent: a separate `RISE_GRAVITY_FP` (0.008) applies while `vy > 0`
-  and ungrounded, giving a floaty feel on the way up. Normal gravity (0.030)
-  kicks in on descent.
+These notes predate the racer; the code remains in game/ as legacy.
 
-### Enemy / Boss Design
-- Both regular enemies and the boss use the sun-with-sunglasses GLB (`sunVertex`
-  colorMode). The boss uses the same mesh but at 2× scale and with 6 HP.
-- Hitbox radius is stored per-enemy (`hitRadius`): 2.0 for regulars (matches
-  billboard half-width), 5.5 for the boss.
-- `breath.js` collision checks radial distance against `e.hitRadius`; frozen
-  enemies are shattered on second breath impact after a freeze timer expires.
-
-### Audio
-- Background music: user-provided MP3 ("Fire Village — Nekroturge") looped.
-- Web Audio API managed by `audio.js`; volume tuned separately for BGM vs SFX.
-
-### Persistence
-- `persistence.js` — `loadSave` / `writeSave` via `localStorage`; optional
-  binary `.froyo` file export (`downloadFroyoFile`) for sharing runs.
+- Double-jump + glide, one-way platforms, bridge spline pass, biomes.
+- Enemy/boss AI, hazards, collectibles, portal progression, Voronoi
+  island world-gen with shape builders.
+- Same rasterizer/geometry/color pipeline shared with the racer.
 
 ---
 
 ## Journal
-- User rotated the ahura GLB itself and set carModel.yawOffset back to 0, but the car still faced wrong ("controls messed up" — visual only, physics never used the model). Root cause: loadGLBMesh strips node matrixWorld, so creator-baked rotations were ignored. Fixed: opt-in `applyNodeTransforms` in geometry.js, enabled for the racer's vehicle load; yawOffset default synced to 0. Awaiting playtest with the live asset.
-- User: bowl texture loaded but other meshes rendered brown → root cause: loader kept only the FIRST embedded texture for the whole merged model. Fixed with per-mesh textures (`triTextures` per-triangle lookup in geometry.js, wired through loadGLBMesh + loadGLBAnimation + buildMeshTris). Facing-left fixed by creator via slider (rotation 90, size 3 — synced into tunables.js). Awaiting playtest.
-- Froyo model-swap animation system (idle/walk/jump→fall/land baked-flipbook GLBs from user's hand-painted re-models) + embedded GLB textures re-enabled for non-terrain models (`"textured"` colorMode, auto-on in default mode; terrain palette system untouched). Awaiting playtest.
-- Procgen switched from zone biomes to WORLD biomes (user request): one palette per generated world (`generateWorld(seed,{biome})`), `WORLD_BIOME_CYCLE` advances it per portal warp, world stamps `biome`/`skyBiome` tokens so terrain+sky retint together. CHANGELOG entry still pending. Awaiting playtest.
-- Phase 4 complete (gems/gradient sprinkles/3HP+i-frames+flicker/2 continues/portal world progression). Phase 4.4: level JSON top-level `biome` (+optional `skyBiome`) token now drives terrain AND sky per level; token round-trips through mapgen-export + scene editor; validator covers it; sky resets on new game. Awaiting playtest.
-- Phase 3 COMPLETE: enemyai rewrite (patrol/LOS/contact/freeze-shatter + boss FSM), hazards.js (spikes/lava/crushers), boss defeat gem drop, SFX flag rework, live tunable hooks (enemy/player/portal), spawn/shatter FX. Needs playtest.
-- Bridges "look and work great" (crop-to-content + spline collision confirmed). User asked for fewer bridges: bridge pass now rolls BRIDGE_CHANCE (0.35) per eligible pair — bridge if it hits, otherwise `buildSteppingStones` hop platforms (one-way, ~2.1S spacing, perpendicular jitter, mid-gap dip) between the same edge anchors. Awaiting playtest.
-- Still visual gaps in bridges → sprite PNG has transparent padding that repeated with wrap-tiling. Added `cropToContent` alpha-bbox crop in textureloader; bridge texture loads cropped. Awaiting playtest.
-- User kept falling through bridges → root cause: one-way face gate rejected uphill spline faces while walking (deck rises > 0.05/frame). Fixed: gate only applies airborne (`!wasGrounded`). Awaiting playtest.
-- Bridge spline collision baked on map load (`_registerBridgeCollision`, `bridge_col` face platforms) — player walks the exact rendered ribbon; old flat plank AABBs skipped via `_faceCollision`. Playtest found uphill fall-through (see above).
-- Bridge texture didn't tile across the spline (v reset 0..1 per span + texture loaded clamp): switched to continuous arc-length v (_v0/_v1 per plank, one repeat per spacing) + wrap-mode texture. Awaiting playtest.
-- Spline-based bridges (user request): buildBridge path = cubic Bézier — ends anchored at actual island top heights (decks now slope between unequal islands), sag + random lateral bow; edges + perpendiculars sampled exactly on the spline and shared between planks (replaces midpoint averaging). Awaiting playtest.
-- Bridge faces connected: buildBridge now emits shared edge points per plank (midpoint pos + averaged height with neighbor); rendered via new buildFlatSpriteSpan as a continuous tilted ribbon along the arc — fixes stepped/gapped planks from the flatsprite swap. Collision unchanged. Awaiting playtest.
-- Bridge GLB replaced by flatsprite textured planes (user request; GLB path removed from game.js, alpha-cutout rasterizer added).
-- Inner ring sometimes unreachable → lowered ring height bands one LUT step (inner +3.2..+9.6, outer +9.6..+22.4 above portal top). mountain_B swapped again (714760cb-…; previous upload was untextured/invisible). Awaiting playtest.
-- Halved rings felt "a bit too tight radially" → widened ~25% (inner ≈51–62, outer ≈68–86, ~3/4 of original pre-halving distances); BRIDGE_MAX_GAP 7S→9S. Awaiting playtest feedback.
-- Swapped mountain_B_model to new user upload (2195d32f-…).
-- Ring distance halved + islands at 2/3 size per user request (islandatlas TARGET_HALF + world.js CHILD_SHAPE_SCALE) — distance then partially reverted (see above); the 2/3 size stands.
+Newest first. Design narrative only; the authoritative per-session log is
+CHANGELOG.md.
+
+- Pause menu moved into MenuController (fullscreen bindings quit shared
+  with OPTIONS); 1s rev fade; docs rewrite for AP3X THEO... .
+- Intro: warning -> title swoop/slide -> PRESS START -> loading bar;
+  options gained fullscreen + rebind; ABOUT renders README+CHANGELOG.
+- Best-lap line turns red via body-font tint pass.
+- Added smallfont "/" and "1" glyphs; loadHudFonts digit-merge no longer
+  clobbers body glyphs.
+- Per-mesh GLB textures; "textured" colorMode; Froyo model-swap frames.
+- Vehicle facing fix (applyNodeTransforms) + asset CDN migration.
+
+---

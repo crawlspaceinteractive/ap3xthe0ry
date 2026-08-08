@@ -9,16 +9,27 @@ import { loadTexture } from "../engine/textureloader.js";
 import { drawSpriteFit } from "../engine/spritesheet.js";
 import { drawText } from "../engine/renderer.js";
 import { SCREEN_W, SCREEN_H } from "../engine/luts.js";
+import { assetUrl } from "../engine/asseturls.js";
 
-const SPEED_DIR = "assets/2D/ui/fonts/numbers/speedometer/";
-const POS_DIR   = "assets/2D/ui/fonts/numbers/position/";
-const BIG_DIR   = "assets/2D/ui/fonts/bigfont/";
-const BODY_DIR  = "assets/2D/ui/fonts/smallfont/";
+// Nested asset paths (Git layout); assetUrl() maps each to the flat CDN URL:
+// speedometer digits = "small0.png".."small9.png" (32x42), position digits =
+// "0.png".."9.png" (64x82) + "1st/2nd/3rd.png", bigfont letters =
+// "A_.png".."Z_.png" (32x64), smallfont = "A.png"/"a.png" (16x16) + named
+// punctuation files.
+const DIR_SPEED = "assets/2D/ui/fonts/numbers/speedometer/";
+const DIR_POS   = "assets/2D/ui/fonts/numbers/position/";
+const DIR_BIG   = "assets/2D/ui/fonts/bigfont/";
+const DIR_BODY  = "assets/2D/ui/fonts/smallfont/";
+const speedFile = n => `${DIR_SPEED}small${n}.png`;
+const posFile   = n => `${DIR_POS}${n}.png`;
+const sfxFile   = n => `${DIR_POS}${n}.png`;   // "1st.png", "2nd.png", "3rd.png"
+const bigFile   = ch => `${DIR_BIG}${ch}_.png`;
 const DIGITS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 const SUFFIXES = ["1st", "2nd", "3rd"];
 const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const LOWER = "abcdefghijklmnopqrstuvwxyz";
-const PUNCT = ["!", '"', "'", ")", "+", ",", "-", ".", ":", ";", "?", "{"];
+const PUNCT = ["!", '"', "'", "(", ")", "+", ",", "-", ".", ":", ";", "?", "/", "1",
+                     "2", "3", "4"];
 const BIG_CHARS = UPPER.split("");
 const BODY_CHARS = [...UPPER.split(""), ...LOWER.split(""), ...PUNCT];
 const SPACE_RATIO = 0.5;
@@ -33,8 +44,13 @@ const BODY_FILES = { ".": "period" ,
                         "?": "question" ,
                         "+": "plus" ,
                         "-": "dash" ,
-                        "'": "tick" };
-const bodyGlyphFile = ch => `${BODY_DIR}${BODY_FILES[ch] || ch}.png`;
+                        "'": "tick" ,
+                        "/": "slash" ,
+                        "1": "title1",  // smallfont-style "1" (title screen)
+                        "2": "title2",
+                        "3": "title3",
+                        "4": "title4" };
+const bodyGlyphFile = ch => `${DIR_BODY}${BODY_FILES[ch] || ch}.png`;
 
 // Wraps a loaded sprite with per-glyph advance metrics (content width), so text
 // tracks tight to the visible stroke instead of the full cell width.
@@ -62,10 +78,10 @@ function withMetrics(tex) {
 // speedometer digits into `body` afterwards.
 export async function loadBodyFonts() {
   const files = [
-    ...BIG_CHARS.map(ch => `${BIG_DIR}${ch}.png`),
+    ...BIG_CHARS.map(ch => bigFile(ch)),
     ...BODY_CHARS.map(ch => bodyGlyphFile(ch)),
   ];
-  const texs = await Promise.all(files.map(f => loadTexture(f)));
+  const texs = await Promise.all(files.map(f => loadTexture(assetUrl(f))));
   const big = {}, body = {};
   for (let i = 0; i < BIG_CHARS.length; i++) {
     const g = withMetrics(texs[i]);
@@ -86,12 +102,12 @@ export async function loadBodyFonts() {
 // Returns { speed, pos, suffix, big, body }; maps hold metric-wrapped sprites.
 export async function loadHudFonts() {
   const files = [
-    ...DIGITS.map(n => `${SPEED_DIR}${n}.png`),
-    ...DIGITS.map(n => `${POS_DIR}${n}.png`),
-    ...SUFFIXES.map(n => `${POS_DIR}${n}.png`),
+    ...DIGITS.map(n => speedFile(n)),
+    ...DIGITS.map(n => posFile(n)),
+    ...SUFFIXES.map(n => sfxFile(n)),
   ];
   const [texs, bodyFonts] = await Promise.all([
-    Promise.all(files.map(f => loadTexture(f))),
+    Promise.all(files.map(f => loadTexture(assetUrl(f)))),
     loadBodyFonts(),
   ]);
   const speed = {}, pos = {}, suffix = {};
@@ -102,8 +118,16 @@ export async function loadHudFonts() {
   for (let i = 0; i < SUFFIXES.length; i++) {
     suffix[SUFFIXES[i]] = texs[i + DIGITS.length * 2];
   }
+  // Merge speedometer digits into body as a fallback — but never clobber a
+  // dedicated smallfont glyph (e.g. "1" ships as title1.png in smallfont style).
+  // Bigfont text ALWAYS uses the steel speedometer digits (preferred title-glyph
+  // behavior — e.g. the 3/0 in "AP3X THE0RY"), so merge them into `big` too;
+  // otherwise digits would fall through to the body alt map (smallfont "1").
   for (const d of DIGITS) {
-    if (speed[d]) bodyFonts.body[d] = { s: speed[d], minX: 0, adv: speed[d].width };
+    if (!speed[d]) continue;
+    const g = { s: speed[d], minX: 0, adv: speed[d].width };
+    if (!bodyFonts.body[d]) bodyFonts.body[d] = g;
+    bodyFonts.big[d] = g;
   }
   return { speed, pos, suffix, big: bodyFonts.big, body: bodyFonts.body };
 }
@@ -176,11 +200,11 @@ function ordinalSuffix(n) {
 // Glyph map entries are { s, minX, adv } (see withMetrics). A glyph is blitted
 // full-cell at (dx - minX * scale) so its content starts exactly at dx and the
 // advance (content width) drives spacing — tight, consistent baselines.
-function blitGlyph(rd, g, dx, dy, targetH, color) {
+function blitGlyph(rd, g, dx, dy, targetH, color, scaleX = 1) {
   const s = g.s;
   if (!s || !s.data) return;
   const scale = targetH / s.height;
-  const targetW = Math.max(1, Math.round(s.width * scale));
+  const targetW = Math.max(1, Math.round(s.width * scale * scaleX));
   const { buf32 } = rd;
   const { data, width, height } = s;
   const x0 = Math.round(dx);
@@ -192,7 +216,7 @@ function blitGlyph(rd, g, dx, dy, targetH, color) {
     for (let x = 0; x < targetW; x++) {
       const px = x0 + x;
       if (px < 0 || px >= SCREEN_W) continue;
-      const sx = Math.min(width - 1, (x / scale) | 0);
+      const sx = Math.min(width - 1, (x / (scale * scaleX)) | 0);
       const si = (sy * width + sx) * 4;
       if (data[si + 3] < 128) continue;
       buf32[py * SCREEN_W + px] = tint === -1
@@ -256,6 +280,26 @@ export function drawBigText(rd, fonts, str, x, y, targetH, color = null, gap = 2
 export function measureBigText(fonts, str, targetH, gap = 2) {
   if (!fonts || !fonts.big) return 0;
   return measureGlyphs(fonts.big, String(str).toUpperCase(), targetH, gap, fonts.body);
+}
+
+// Bigfont with independent horizontal scale (title-intro squash/stretch).
+// The whole string (glyph widths, gaps, spaces) is scaled by scaleX so the
+// text squashes/stretches around its left edge. Returns the width drawn.
+export function drawBigTextX(rd, fonts, str, x, y, targetH, scaleX = 1, color = null, gap = 2) {
+  if (!fonts || !fonts.big) return 0;
+  const glyphs = fonts.big, alt = fonts.body;
+  let cx = x;
+  for (const ch of String(str).toUpperCase()) {
+    const g = glyphs[ch] || (alt && alt[ch]);
+    if (g) {
+      const scale = targetH / g.s.height;
+      blitGlyph(rd, g, cx - g.minX * scale * scaleX, y, targetH, color, scaleX);
+      cx += (g.adv * scale + gap) * scaleX;
+    } else {
+      cx += (Math.round(targetH * SPACE_RATIO) + gap) * scaleX;
+    }
+  }
+  return Math.max(0, cx - x);
 }
 
 // Body font (smallfont letters/punct + speedometer digits). Returns width.

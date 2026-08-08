@@ -4,6 +4,9 @@
  * All sounds are procedurally generated oscillator bursts.
  * AudioContext is lazily created on first play (respects autoplay policy).
  */
+import { assetUrl } from "./asseturls.js";
+/**
+ */
 
 let _ctx = null;
 
@@ -179,7 +182,7 @@ export function sfxLand(speed) {
 // Falls back to direct <audio> playback if AudioContext is unavailable.
 // Use a relative path so the asset can live inside the repository's `music/` folder.
 
-const BGM_URL = "assets/audio/soundtrack/1._collector.mp3";
+const BGM_URL = assetUrl("assets/audio/soundtrack/1._collector.mp3");
 
 let _bgmAudio = null;       // HTMLAudioElement
 let _bgmSource = null;      // MediaElementAudioSourceNode

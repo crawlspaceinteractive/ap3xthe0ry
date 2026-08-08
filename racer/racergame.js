@@ -1,9 +1,10 @@
 /**
  * racer/racergame.js — Game orchestrator for the PS1 arcade racer.
  *
- * States: LOADING → TITLE → RACE ⇄ PAUSE.
- * Fixed-step 60Hz simulation inside a rAF loop (accumulator), so physics is
- * identical on 60/120/144Hz displays. Rendering happens once per rAF.
+ * States: INTRO → MENU → RACE ⇄ PAUSE. Leaving a course (QUIT) passes through
+ * LOADING — an intro-style loading bar with the last track's sky orbiting
+ * behind it — before settling into MENU. Fixed-step 60Hz simulation inside a
+ * rAF loop (accumulator), so physics is identical on 60/120/144Hz displays. Rendering happens once per rAF.
  */
 import {
   createRenderer, clearSky, present, setFogDistance,
@@ -13,13 +14,17 @@ import {
 import { sinDeg, cosDeg, scaleAtX, HALF_W } from "../engine/luts.js";
 import { InputController, BTN_FLAGS } from "../engine/input.js";
 import { loadTexture } from "../engine/textureloader.js";
+import { assetUrl } from "../engine/asseturls.js";
 import { loadGLBMeshIfAvailable } from "../engine/geometry.js";
-import { buildTrack } from "./track.js";
+import { getLevelDef } from "./levels.js";
 import { createVehicle, stepVehicle } from "./vehicle.js";
 import { createChaseCam, updateChaseCam, snapChaseCam } from "./chasecam.js";
 import { prepareVehicleMesh, buildVehicleTris, getHeadlightRig } from "./vehiclemesh.js";
 import { buildTrackTris } from "./trackrender.js";
-import { drawRacerHUD, drawTitle, drawPause, drawLoading } from "./racerhud.js";
+import { drawRacerHUD } from "./racerhud.js";
+import { TitleIntro } from "./titleintro.js";
+import { MenuController } from "./menus.js";
+import { drawLoadingBar } from "./loading.js";
 import { loadHudFonts } from "./hudfont.js";
 import { createLapTimer, stepLapTimer, resetLapTimer } from "./laptimer.js";
 import { racerSound } from "./racersound.js";
@@ -28,6 +33,10 @@ import { createScenery } from "./scenery.js";
 
 const STEP_MS = 1000 / 60;
 const MAX_FRAME_MS = 100;
+// Fixed duration (60Hz frames) of the menu-transition loading screen. The bar
+// fills at the same pace as the boot intro's LOAD phase (LOAD_T) so the two
+// are visually identical, then drops into MENU.
+const LOADING_T = 180;
 
 const SMOKE_COLORS = [rgba(200, 200, 205), rgba(80, 165, 255), rgba(255, 150, 50), rgba(200, 90, 255)];
 const BOOST_COLORS = [rgba(255, 200, 80), rgba(255, 120, 40), rgba(255, 240, 180)];
@@ -64,11 +73,15 @@ export class RacerGame {
     // full road length stays visible. Enables the renderer's fog-to-sky mode.
     setFogDistance(20, 170);
     this.input = new InputController();
-    this.state = "LOADING";
+    this.state = "INTRO";           // warning card → title cinematic → load bar
+    this.intro = new TitleIntro();
+    this.menu = new MenuController();
+    this._assetsReady = false;
     this.frame = 0;
-    this.track = buildTrack();
-    this.vehicle = createVehicle(this.track);
-    this.cam = createChaseCam(this.vehicle);
+    this.levelIdx = 0;
+    this.track = null;
+    this.vehicle = null;
+    this.cam = null;
     this.tex = { road: null, grass: null };
     this.fx = null;           // FX billboard sprites (flare / lightray / smoke)
     this.mesh = null;          // prepared vehicle mesh
@@ -82,18 +95,28 @@ export class RacerGame {
     this._last = 0;
     this._raf = 0;
     this._running = false;
+    this._loaded = false;
     this._titleAngle = 0;
+    this._loadingT = 0;
+  }
 
-    // Pause menu state
-    this._pauseRow = 0;
-    this._settingsHeld = 0;
-    this._prevAxisX = 0;
-    this._prevAxisY = 0;
+  /** Begin asset loading ONLY (no render loop). The boot cinematic
+   *  (racer/intro.js) plays on a DOM overlay while this warms the cache, so
+   *  assets are in by the time the cinematic reveals → game.start() won't
+   *  flash a loading bar. */
+  warmup() {
+    if (!this._loaded) {
+      this._loaded = true;
+      this._load();
+    }
   }
 
   start() {
     this._running = true;
-    this._load();
+    if (!this._loaded) {
+      this._loaded = true;
+      this._load();
+    }
     const loop = (ts) => {
       if (!this._running) return;
       this._raf = requestAnimationFrame(loop);
@@ -110,25 +133,54 @@ export class RacerGame {
 
   async _load() {
     const [road, grass, meshData, hudFonts, flare, ray, smoke] = await Promise.all([
-      loadTexture("assets/2D/textures/rock.png", { wrap: true }),
-      loadTexture("assets/2D/textures/grass.png", { wrap: true }),
+      loadTexture(assetUrl("assets/2D/textures/base/rock.png"), { wrap: true }),
+      loadTexture(assetUrl("assets/2D/textures/base/grass.png"), { wrap: true }),
       // applyNodeTransforms: respect rotations the creator bakes into the
       // GLB's scene nodes (buildVehicleTris owns the car-yaw transform).
-      loadGLBMeshIfAvailable("assets/3D/models/ahura.glb", "vehicle", false, { applyNodeTransforms: true }),
+      loadGLBMeshIfAvailable(assetUrl("assets/3D/models/ahura.glb"), "vehicle", false, { applyNodeTransforms: true }),
       loadHudFonts(),
-      loadTexture("assets/2D/sprites/headlight_flare.png", { wrap: false }),
-      loadTexture("assets/2D/sprites/lightray.png", { wrap: false }),
-      loadTexture("assets/2D/sprites/smoke_anim.png", { wrap: false }),
+      loadTexture(assetUrl("assets/2D/sprites/fx/headlight_flare.png"), { wrap: false }),
+      loadTexture(assetUrl("assets/2D/sprites/fx/lightray.png"), { wrap: false }),
+      loadTexture(assetUrl("assets/2D/sprites/fx/smoke_anim.png"), { wrap: false }),
     ]);
     this.tex.road = road;
     this.tex.grass = grass;
     this.mesh = prepareVehicleMesh(meshData);
     this.hudFonts = hudFonts;
     this.fx = { flare, ray, smoke };
-    // Load sky layers and scenery in parallel (non-blocking)
+    // Scenery texture + sky layers load in parallel (non-blocking); trees
+    // for the first level are placed once the pine texture is in.
+    await this.scenery.load();
     this.sky.load();
-    this.scenery.load(this.track);
-    if (this.state === "LOADING") this.state = "TITLE";
+    this._assetsReady = true;
+    this.loadLevel(this.levelIdx);
+  }
+
+  /** Build a level's runtime state (track, vehicle, chase cam, scenery).
+   *  Safe to call repeatedly — unloads + swaps. The menu backdrop re-orbits
+   *  whichever level is loaded last. */
+  loadLevel(idx) {
+    this.unloadLevel();
+    this.levelIdx = idx;
+    this.track = getLevelDef(idx).build();
+    this.vehicle = createVehicle(this.track);
+    this.cam = createChaseCam(this.vehicle);
+    if (this._assetsReady) this.scenery.place(this.track);
+    snapChaseCam(this.cam, this.vehicle);
+    resetLapTimer(this.lapTimer);
+    this.place = 1;
+    return this;
+  }
+
+  /** Tear down the current level's transient state so a fresh load (or a
+   *  return to the menu) starts clean. Keeps shared assets (textures, vehicle
+   *  mesh, sounds, sky) in memory — they're engine-level, not level-level. */
+  unloadLevel() {
+    this.particles.length = 0;
+    resetLapTimer(this.lapTimer);
+    this.place = 1;
+    racerSound.duck();
+    racerSound.fadeOutMusic(900);
   }
 
   // ---- Controls mapping --------------------------------------------------------
@@ -162,20 +214,35 @@ export class RacerGame {
     // ---- State transitions (per display frame) ---------------------------------
     const startPressed = this.input.justPressed(BTN_FLAGS.START);
     const aPressed = this.input.justPressed(BTN_FLAGS.A);
-    if (this.state === "TITLE" && (startPressed || aPressed)) {
-      this.state = "RACE";
-      snapChaseCam(this.cam, this.vehicle);
-      resetLapTimer(this.lapTimer);
-      racerSound.startRace();
-    } else if (this.state === "RACE" && startPressed) {
+    if (this.state === "INTRO") {
+      if (startPressed || aPressed) {
+        if (this.intro.pressStart() === "start") racerSound.rev();
+      }
+      if (this.intro.finished) { this.state = "MENU"; this.menu.reset(); }
+    } else if (this.state === "MENU") {
+      if (this.menu.tick(this.input) === "PLAY") {
+        this.state = "RACE";
+        this.loadLevel(this.levelIdx);
+        racerSound.startRace();
+      }
+    } else if (this.state === "RACE" &&
+               (startPressed || this.input.keyJustPressed("Escape"))) {
       this.state = "PAUSE";
-      this._pauseRow = 0;
-      this._prevAxisX = this.input.axisX;
-      this._prevAxisY = this.input.axisY;
-      this._settingsHeld = 0;
+      this.menu.enterPause(this.input);
       racerSound.duck();
     } else if (this.state === "PAUSE") {
-      this._tickPause();
+      const r = this.menu.tick(this.input);
+      if (r === "RESUME") {
+        this.state = "RACE";
+      } else if (r === "QUIT") {
+        // Quit to main menu: a loading screen matching the boot intro's LOAD
+        // bar, with the last track's sky orbiting behind it. Teardown of the
+        // old level + rebuild of the MENU backdrop happens after the bar fills
+        // (see the LOADING branch in the step loop).
+        this.unloadLevel();
+        this._loadingT = 0;
+        this.state = "LOADING";
+      }
     }
 
     // ---- Fixed-step simulation ----------------------------------------------------
@@ -184,7 +251,19 @@ export class RacerGame {
       this._acc -= STEP_MS;
       this.frame++;
       if (this.state === "RACE") this._step();
-      else if (this.state === "TITLE") this._titleAngle += 0.15;
+      else if (this.state === "INTRO") this.intro.step(this._assetsReady);
+      else if (this.state === "MENU") this._titleAngle += 0.15;
+      else if (this.state === "LOADING") {
+        this._loadingT++;
+        this._titleAngle += 0.15;
+        if (this._loadingT >= LOADING_T) {
+          // Bar is full — now do the actual teardown/rebuild that the loading
+          // screen was masking, then settle into the MENU state.
+          this.loadLevel(this.levelIdx);
+          this.state = "MENU";
+          this.menu.reset();
+        }
+      }
     }
 
     this._render();
@@ -205,53 +284,6 @@ export class RacerGame {
     updateChaseCam(this.cam, v, this.track, this._rearHeld());
     this._spawnParticles(v);
     this._updateParticles();
-  }
-
-  _tickPause() {
-    const inp = this.input;
-    const ROWS = 3; // 0=Resume, 1=SFX Vol, 2=Music Vol
-
-    const startPressed = inp.justPressed(BTN_FLAGS.START);
-    const aPressed = inp.justPressed(BTN_FLAGS.A);
-
-    // Edge-detect axis inputs
-    const prevY = this._prevAxisY;
-    const prevX = this._prevAxisX;
-    const axY = inp.axisY;
-    const axX = inp.axisX;
-    const justDown  = axY >  0.4 && prevY <=  0.4;
-    const justUp    = axY < -0.4 && prevY >= -0.4;
-    const justRight = axX >  0.4 && prevX <=  0.4;
-    const justLeft  = axX < -0.4 && prevX >= -0.4;
-    this._prevAxisY = axY;
-    this._prevAxisX = axX;
-
-    // Navigate rows (W/S or D-pad up/down)
-    if (justDown || inp.justPressed(BTN_FLAGS.B)) this._pauseRow = (this._pauseRow + 1) % ROWS;
-    if (justUp)                                   this._pauseRow = (this._pauseRow + ROWS - 1) % ROWS;
-
-    // Confirm: Start always resumes, A on RESUME row also resumes
-    if (startPressed || (aPressed && this._pauseRow === 0)) {
-      this.state = "RACE";
-      return;
-    }
-
-    // Slider adjust with auto-repeat (A/D or left stick)
-    const hDir = axX > 0.4 ? 1 : axX < -0.4 ? -1 : 0;
-    hDir !== 0 ? this._settingsHeld++ : (this._settingsHeld = 0);
-    const fire = (justLeft || justRight) ||
-                 this._settingsHeld === 1 ||
-                 (this._settingsHeld > 20 && this._settingsHeld % 5 === 0);
-
-    if (fire && hDir !== 0 && this._pauseRow > 0) {
-      const step = 0.05;
-      const v = racerSound.getVolumes();
-      if (this._pauseRow === 1) {
-        racerSound.setSfxVol(Math.max(0, Math.min(1, v.sfx + hDir * step)));
-      } else {
-        racerSound.setMusicVol(Math.max(0, Math.min(1, v.music + hDir * step)));
-      }
-    }
   }
 
   // ---- Particles ---------------------------------------------------------------
@@ -387,9 +419,42 @@ export class RacerGame {
     const rd = this.rd;
     const v = this.vehicle;
 
-    // Title screen orbits the track center; other states use the chase cam
+    // Intro cinematic is pure 2D — no 3D scene behind it.
+    if (this.state === "INTRO") {
+      this.intro.render(rd, this.hudFonts, this.frame, this._assetsReady);
+      present(rd, 0, this.intro.fade);
+      return;
+    }
+
+    // Menu loading screen (leaving a course): the just-left track's sky orbits
+    // behind the intro-style loading bar. Rendered here with no 3D geometry —
+    // the bar fill mirrors the boot intro's LOAD phase.
+    if (this.state === "LOADING") {
+      let a = this._titleAngle;
+      let cam2 = this.cam;
+      if (this.vehicle) {
+        const ori = this.vehicle;
+        cam2 = {
+          x: ori.x + sinDeg(a) * 16,
+          y: ori.y + 6,
+          z: ori.z + cosDeg(a) * 16,
+          yaw: a + 180,
+          pitch: 16,
+          fovMul: 1,
+        };
+      }
+      const yaw = cam2 ? cam2.yaw : a + 180;
+      const pitch = cam2 ? cam2.pitch : 16;
+      clearSky(rd, yaw, this.frame);
+      this.sky.blit(rd, yaw, pitch);
+      drawLoadingBar(rd, this.hudFonts, Math.min(1, this._loadingT / LOADING_T));
+      present(rd, 0, 0);
+      return;
+    }
+
+    // Main menu orbits the track center; other states use the chase cam
     let cam = this.cam;
-    if (this.state === "TITLE" || this.state === "LOADING") {
+    if (this.state === "MENU") {
       const a = this._titleAngle;
       cam = {
         x: v.x + sinDeg(a) * 16,
@@ -404,7 +469,7 @@ export class RacerGame {
     clearSky(rd, cam.yaw, this.frame);
     this.sky.blit(rd, cam.yaw, cam.pitch);
 
-    if (this.state !== "LOADING") {
+    {
       const tris = buildTrackTris(this.track, this.tex, cam, this.frame);
       this.scenery.build(cam, this.frame, tris);
       // Hide/blink the car while respawning
@@ -444,14 +509,10 @@ export class RacerGame {
     }
 
     // ---- HUD ----------------------------------------------------------------------
-    if (this.state === "LOADING") drawLoading(rd, this.frame, this.hudFonts);
-    else if (this.state === "TITLE") drawTitle(rd, this.frame, this.hudFonts);
+    if (this.state === "MENU") this.menu.draw(rd, this.hudFonts, this.frame);
     else {
       drawRacerHUD(rd, v, this.frame, this.hudFonts, this.place, this.track, this.lapTimer);
-      if (this.state === "PAUSE") {
-        const vols = racerSound.getVolumes();
-        drawPause(rd, this._pauseRow, vols.sfx, vols.music, this.hudFonts);
-      }
+      if (this.state === "PAUSE") this.menu.draw(rd, this.hudFonts, this.frame);
     }
 
     // Screen fade during respawn for a clean transition

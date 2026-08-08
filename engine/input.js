@@ -25,24 +25,52 @@ export const BTN_FLAGS = {
   RB:    0b0000001000000000,
 };
 
-// Default keyboard mapping
-// Movement: WASD (left stick).
-// Jump: Space (A). Ice breath: J (X). B: K. Y: L.
-// LT (glide hold): Shift. RT (charge hold): Ctrl.
-// Start: Enter. Select: Tab.
-const KEY_MAP = {
+// Fixed keyboard mapping (always active, on top of the rebindable bindings).
+// Confirm: Space (A). X: J. B: K. Y: L. RT (alt handbrake): Ctrl.
+// Start: Enter. Select: Tab. Escape is NOT mapped here — it is the universal
+// BACK key (menus) handled explicitly by the menu controller via
+// keyJustPressed("Escape"), so it never double-fires as a confirm/START.
+const FIXED_KEY_MAP = {
   Space:        BTN_FLAGS.A,
   KeyJ:         BTN_FLAGS.X,
   KeyK:         BTN_FLAGS.B,
   KeyL:         BTN_FLAGS.Y,
-  ShiftLeft:    BTN_FLAGS.LT,
-  ShiftRight:   BTN_FLAGS.LT,
   ControlLeft:  BTN_FLAGS.RT,
   ControlRight: BTN_FLAGS.RT,
   Enter:        BTN_FLAGS.START,
-  Escape:       BTN_FLAGS.START,  // Escape = open/close menu / pause
   Tab:          BTN_FLAGS.SEL,
 };
+
+// Rebindable actions (Options → Key Bindings). up/down/left/right feed the
+// movement axes; the rest map to button flags.
+export const DEFAULT_BINDINGS = {
+  up:    "KeyW",
+  down:  "KeyS",
+  left:  "KeyA",
+  right: "KeyD",
+  drift: "ShiftLeft",
+  rear:  "KeyR",
+  reset: "KeyT",
+  pause: "Enter",
+};
+const BINDING_FLAGS = {
+  drift: BTN_FLAGS.LT,
+  rear:  BTN_FLAGS.Y,
+  reset: BTN_FLAGS.SEL,
+  pause: BTN_FLAGS.START,
+};
+const BINDINGS_KEY = "ap3x_bindings";
+
+function loadBindings() {
+  const b = { ...DEFAULT_BINDINGS };
+  try {
+    const saved = JSON.parse(localStorage.getItem(BINDINGS_KEY) || "{}");
+    for (const k in DEFAULT_BINDINGS) {
+      if (typeof saved[k] === "string") b[k] = saved[k];
+    }
+  } catch (_) { /* fresh defaults */ }
+  return b;
+}
 
 export class InputController {
   constructor() {
@@ -61,6 +89,10 @@ export class InputController {
     this._kbAxisX = 0;
     this._kbAxisY = 0;
     this._kbOrbitX = 0;
+
+    this.bindings = loadBindings();
+    this._keyMap = {};
+    this._rebuildKeyMap();
 
     this._keys = new Set();
     // Pulse set: keys that received a keydown this frame, persisted until sample() consumes them.
@@ -119,16 +151,49 @@ export class InputController {
     this._recomputeKb();
   }
 
+  // ---- Rebindable key API (Options → Key Bindings) --------------------------
+  _rebuildKeyMap() {
+    const m = { ...FIXED_KEY_MAP };
+    for (const action in BINDING_FLAGS) {
+      const code = this.bindings[action];
+      if (code) m[code] = (m[code] || 0) | BINDING_FLAGS[action];
+    }
+    this._keyMap = m;
+  }
+
+  getBindings() { return { ...this.bindings }; }
+
+  setBinding(action, code) {
+    if (!(action in DEFAULT_BINDINGS) || !code) return;
+    this.bindings[action] = code;
+    this._rebuildKeyMap();
+    this._recomputeKb();
+    try { localStorage.setItem(BINDINGS_KEY, JSON.stringify(this.bindings)); } catch (_) {}
+  }
+
+  resetBindings() {
+    this.bindings = { ...DEFAULT_BINDINGS };
+    this._rebuildKeyMap();
+    this._recomputeKb();
+    try { localStorage.removeItem(BINDINGS_KEY); } catch (_) {}
+  }
+
+  /** First raw key that went down this frame (for rebind capture), or null. */
+  firstPulse() {
+    return this.rawPulses ? (this.rawPulses.values().next().value || null) : null;
+  }
+
   _recomputeKb() {
     let m = 0;
-    for (const k of this._keys) if (KEY_MAP[k]) m |= KEY_MAP[k];
+    for (const k of this._keys) if (this._keyMap[k]) m |= this._keyMap[k];
     this._keyboardMask = m;
 
+    const b = this.bindings;
     let x = 0, y = 0;
-    if (this._keys.has("KeyA") || this._keys.has("ArrowLeft")) x -= 1;
-    if (this._keys.has("KeyD") || this._keys.has("ArrowRight")) x += 1;
-    if (this._keys.has("KeyW") || this._keys.has("ArrowUp")) y -= 1;
-    if (this._keys.has("KeyS") || this._keys.has("ArrowDown")) y += 1;
+    if (this._keys.has(b.left) || this._keys.has("ArrowLeft")) x -= 1;
+    if (this._keys.has(b.right) || this._keys.has("ArrowRight")) x += 1;
+    if (this._keys.has(b.up) || this._keys.has("ArrowUp")) y -= 1;
+    if (this._keys.has(b.down) || this._keys.has("ArrowDown")) y += 1;
     this._kbAxisX = x;
     this._kbAxisY = y;
 
@@ -189,7 +254,7 @@ export class InputController {
     this.rawPulses = this._keyPulses.size > 0 ? new Set(this._keyPulses) : null;
     if (this._keyPulses.size > 0) {
       for (const k of this._keyPulses) {
-        const flag = KEY_MAP[k];
+        const flag = this._keyMap[k];
         if (flag) this.mask |= flag;
       }
       this._keyPulses.clear();

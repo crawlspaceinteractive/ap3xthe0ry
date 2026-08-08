@@ -33,6 +33,11 @@ const CP = [
 const HALF_WIDTH   = 7.0;   // road half-width (world units)
 const SAMPLE_SPACE = 3.2;   // target spacing between samples
 
+// Radial control points and road metrics can be overridden per level via
+// buildTrack({ cp, halfWidth, sampleSpace }). Without an override the
+// defaults below (the AHURA RING) are used, so existing callers are unchanged.
+const DEFAULT_DEF = { cp: CP, halfWidth: HALF_WIDTH, sampleSpace: SAMPLE_SPACE };
+
 // Ramp/gap anchor: a point on the west straight (angle ≈ 190°, r ≈ 119)
 const RAMP_ANCHOR_X = 119 * Math.cos((190 * Math.PI) / 180);
 const RAMP_ANCHOR_Z = 119 * Math.sin((190 * Math.PI) / 180);
@@ -50,9 +55,14 @@ function catmullRom(p0, p1, p2, p3, t) {
   );
 }
 
-export function buildTrack() {
+export function buildTrack(def) {
+  const cfg = def || DEFAULT_DEF;
+  const cp = cfg.cp || CP;
+  const halfWidth = cfg.halfWidth || HALF_WIDTH;
+  const sampleSpace = cfg.sampleSpace || SAMPLE_SPACE;
+
   // Control points → world coords
-  const pts = CP.map(([a, r, y]) => {
+  const pts = cp.map(([a, r, y]) => {
     const rad = (a * Math.PI) / 180;
     return { x: r * Math.cos(rad), y, z: r * Math.sin(rad) };
   });
@@ -66,14 +76,14 @@ export function buildTrack() {
     const p2 = pts[(i + 1) % n];
     const p3 = pts[(i + 2) % n];
     const chord = Math.hypot(p2.x - p1.x, p2.z - p1.z);
-    const steps = Math.max(4, Math.round(chord / SAMPLE_SPACE));
+    const steps = Math.max(4, Math.round(chord / sampleSpace));
     for (let s = 0; s < steps; s++) {
       const t = s / steps;
       samples.push({
         x: catmullRom(p0.x, p1.x, p2.x, p3.x, t),
         y: catmullRom(p0.y, p1.y, p2.y, p3.y, t),
         z: catmullRom(p0.z, p1.z, p2.z, p3.z, t),
-        hw: HALF_WIDTH,
+        hw: halfWidth,
         ramp: false, rampLip: false, gap: false,
       });
     }

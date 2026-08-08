@@ -12,6 +12,7 @@
 import { buildTexturedFace, rgba } from "../engine/renderer.js";
 import { sinDeg, cosDeg } from "../engine/luts.js";
 import { loadTexture } from "../engine/textureloader.js";
+import { assetUrl } from "../engine/asseturls.js";
 
 const CULL_DIST    = 165;
 const CULL_DIST_SQ = CULL_DIST * CULL_DIST;
@@ -27,22 +28,24 @@ class Scenery {
     this._ready = false;
   }
 
-  async load(track) {
-    // Load the pine tree texture with cropToContent so wrap-tiling works edge-to-edge
-    this._texture = await loadTexture("assets/2D/sprites/pine_sway.gif", { cropToContent: true });
-    if (!this._texture) {
-      console.warn("[scenery] pine_sway.gif failed to load — trees disabled");
-      return;
-    }
+  /** Drop all placed trees (called on level unload) but keep the cached
+   *  pine texture so the next level's placement is instant. */
+  reset() {
+    this._trees = [];
+    this._ready = false;
+  }
 
-    // Place trees along the track
+  /** Place trees for a track whose samples exist already. If the pine
+   *  texture hasn't loaded yet (early boot), stay not-ready; load() will
+   *  re-place when the texture arrives. */
+  place(track) {
+    if (!this._texture || !track) return;
     const s = track.samples;
     const n = track.count;
     const trees = [];
 
     for (let i = 0; i < n; i += 5) {
       const a = s[i];
-      // Skip ramp samples (trees on ramps look wrong)
       if (a.ramp) continue;
 
       for (const side of [-1, 1]) {
@@ -61,6 +64,16 @@ class Scenery {
     this._trees = trees;
     this._ready = true;
     console.log(`[scenery] placed ${trees.length} pine trees`);
+  }
+
+  /** Load the pine texture (engine-level, happens once at boot). Callers
+   *  use place(track) per loaded level. */
+  async load() {
+    this._texture = await loadTexture(assetUrl("assets/2D/sprites/trees/pine_sway.gif"), { cropToContent: true });
+    if (!this._texture) {
+      console.warn("[scenery] pine_sway.gif failed to load — trees disabled");
+      return;
+    }
   }
 
   /**
