@@ -43,10 +43,17 @@ dithered) and starts `RacerGame`. States: INTRO (warning card → title swoop
   chase cam, HUD + sprite fonts, menus, lap timer, audio, sky, scenery
 - `engine/` — shared Crawlspace core: software renderer, geometry (GLB),
   input, audio, textures, sprite fonts, tunables
-- `game/` — LEGACY Froyo platformer (superseded by the racer; still present)
-- `tools/` — scene editor, level-format validator, hot-reload,
-  mapgen-export, meshweld
+- `game/` — LEGACY Froyo platformer (kept for mining / porting back into
+  the engine feature list; not loaded by the racer)
+- `racer/levels.js` — course catalog (LEVELS); AHURA + maps from
+  `assets/3D/maps/manifest.json` (hydrate at boot)
+- `tools/` — scene editor, spline-editor, level-format validator,
+  hot-reload, mapgen-export, meshweld
 - `data/` — persistence
+
+Debug: `?level=hill-test` or `?level=2` picks a course from LEVELS
+(also seeds the COURSES menu highlight). In-game: PLAY → TIME ATTACK →
+COURSE list (iso preview orbit + live track swap).
 
 ## Docs
 

@@ -285,3 +285,40 @@ Purpose: full history of changes & fixes so regressions can be traced.
 - `racer/racergame.js`: the race state still opens the pause on `startPressed`, and Escape is now ALSO an explicit pause trigger (`keyJustPressed("Escape")`) since it no longer flows through START. In the pause menu, Escape resumes the race (BACK → "RESUME").
 - Hint strings updated from `K/BKSP:BACK` to `ESC:BACK` throughout the menus.
 - Files: `engine/input.js`, `racer/menus.js`, `racer/racergame.js`. `node --check` passed on all. The `SPC:BACK` hint in `racerhud.js` is inside the archive-only `drawPause` — untouched.
+
+## [Session: Course / Track Loading (step 1)]
+- KEEP: `game/` legacy Froyo stays on purpose (mine later / port into engine
+  feature list). Noted in ARCHITECTURE, DESIGN, README.
+- `racer/track.js` `buildTrack`: accepts polar `[a,r,y]` OR XYZ `{x,y,z}`
+  control points; optional per-point `hw`/`bank` on samples; AHURA west
+  ramp only when `applyDefaultRamp: true`.
+- NEW `racer/trackload.js`: `parseSplineTrack` / `loadSplineTrack` for
+  spline-editor JSON (`kind: "spline-track"`).
+- `racer/levels.js` is the level list / course catalog: AHURA RING +
+  test_track (`assets/3D/maps/test_track.json`); helpers `findLevelIndex`,
+  `levelCount`, `resolveLevelTrack`. Future course select scrolls LEVELS.
+- `racer/racergame.js`: async `loadLevel` via levels list; `?level=` id or
+  index for authoring until course-select UI (step 2).
+- Course-select menu, banked ribbon, objects/procgen scenery: deferred.
+
+## [Session: Course Select (step 2)]
+- `racer/menus.js`: new COURSES mode — after TIME ATTACK, scroll LEVELS
+  (name + desc + N/M index). Confirm sets `selectedLevelIdx` and returns
+  "PLAY"; Esc backs to GAMEMODES. Left/right also scroll.
+- `racer/racergame.js`: PLAY applies `menu.selectedLevelIdx` then
+  `_beginRace()` / async `loadLevel`. Menu seeded from `?level=` / default.
+- `racer/levels.js`: catalog comment updated — COURSES scrolls LEVELS.
+- Banked ribbon + objects/procgen still deferred.
+
+## [Session: Course Elevation + Map Scan + Iso Preview]
+- ROOT: `hill_test.json` (y −24.7..30) lived under assets/3D/maps/ but was
+  never on LEVELS; course select also never swapped the backdrop track, so
+  elevation never appeared. Banked ribbon edges were flat (editor uses bank).
+- NEW `assets/3D/maps/manifest.json` — `hydrateLevels()` scans it into LEVELS
+  at boot (AHURA stays #0). Add a map = drop JSON + list it in the manifest.
+- `racer/trackrender.js`: road/rumble/walls/caps use banked `edgePt` (same
+  math as spline-editor ribbonCorners) so elevation+bank lift the ribbon.
+- COURSES: live-loads the highlighted course as the menu backdrop
+  (`loadLevel(idx,{preview:true})`, quiet audio) and uses an iso-style
+  orbit cam (pitch 38°, farther/higher) so hills read clearly.
+- Files: levels.js, racergame.js, trackrender.js, manifest.json, docs.

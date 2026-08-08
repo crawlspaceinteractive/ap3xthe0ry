@@ -1,0 +1,16 @@
+{
+  "tracks": [
+    {
+      "file": "test_track.json",
+      "id": "test-track",
+      "name": "MY TRACK",
+      "desc": "Spline editor test course."
+    },
+    {
+      "file": "hill_test.json",
+      "id": "hill-test",
+      "name": "HILL TEST",
+      "desc": "Elevation stress course — climbs and drops from the spline editor."
+    }
+  ]
+}

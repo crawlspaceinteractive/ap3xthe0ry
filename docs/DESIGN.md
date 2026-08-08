@@ -57,7 +57,8 @@ verifiable 1:1 against the flat bucket. Unknown names pass through.
   tier blips; 1s rev with fade-out.
 
 ### Menus (racer/menus.js)
-- MenuController owns MAIN / CONTROLS / OPTIONS / BINDINGS / ABOUT.
+- MenuController owns MAIN / GAMEMODES / COURSES / CONTROLS /
+  OPTIONS / BINDINGS / ABOUT. COURSES scrolls levels.js LEVELS.
 - Pause is a menu mode (enterPause) with the same sliders/bindings as
   Options; QUIT rebuilds the vehicle and returns to MENU.
 
@@ -65,7 +66,9 @@ verifiable 1:1 against the flat bucket. Unknown names pass through.
 
 ## Design decisions kept from the platformer era (game/)
 
-These notes predate the racer; the code remains in game/ as legacy.
+These notes predate the racer; the code remains in game/ as **legacy —
+intentionally kept**. Mine it later or port features back into the shared
+engine feature list. The racer boot does not load it.
 
 - Double-jump + glide, one-way platforms, bridge spline pass, biomes.
 - Enemy/boss AI, hazards, collectibles, portal progression, Voronoi

@@ -89,19 +89,19 @@ export function buildTrackTris(track, tex, camera, frame) {
     // Behind-camera cull (with margin so the road under the car never pops)
     if (dx * camFx + dz * camFz < -BEHIND_MARGIN) continue;
 
-    const aL = { x: a.x - a.px * a.hw, z: a.z - a.pz * a.hw };
-    const aR = { x: a.x + a.px * a.hw, z: a.z + a.pz * a.hw };
-    const bL = { x: b.x - b.px * b.hw, z: b.z - b.pz * b.hw };
-    const bR = { x: b.x + b.px * b.hw, z: b.z + b.pz * b.hw };
+    const aL = edgePt(a, -1, a.hw);
+    const aR = edgePt(a,  1, a.hw);
+    const bL = edgePt(b, -1, b.hw);
+    const bR = edgePt(b,  1, b.hw);
 
     // ---- Road surface --------------------------------------------------------
     if (!a.gap) {
       const va = a.dist * 0.22, vb = a.dist * 0.22 + a.segLen * 0.22;
       const pts = [
-        { x: aL.x, y: a.y, z: aL.z, u: 0,   v: va },
-        { x: aR.x, y: a.y, z: aR.z, u: 1.5, v: va },
-        { x: bR.x, y: b.y, z: bR.z, u: 1.5, v: vb },
-        { x: bL.x, y: b.y, z: bL.z, u: 0,   v: vb },
+        { x: aL.x, y: aL.y, z: aL.z, u: 0,   v: va },
+        { x: aR.x, y: aR.y, z: aR.z, u: 1.5, v: va },
+        { x: bR.x, y: bR.y, z: bR.z, u: 1.5, v: vb },
+        { x: bL.x, y: bL.y, z: bL.z, u: 0,   v: vb },
       ];
       if (tex.road) {
         for (const t of buildTexturedFace(pts, ROAD_TINT, tex.road, camera)) out.push(t);
@@ -179,13 +179,13 @@ export function buildTrackTris(track, tex, camera, frame) {
     // ---- Gap end caps (vertical faces where the road tears off) ----------------
     const prev = s[(i - 1 + n) % n];
     const capAt = (edge) => {
-      const cL = { x: edge.x - edge.px * edge.hw, z: edge.z - edge.pz * edge.hw };
-      const cR = { x: edge.x + edge.px * edge.hw, z: edge.z + edge.pz * edge.hw };
+      const cL = edgePt(edge, -1, edge.hw);
+      const cR = edgePt(edge,  1, edge.hw);
       const cpts = [
-        { x: cL.x, y: edge.y, z: cL.z },
-        { x: cR.x, y: edge.y, z: cR.z },
-        { x: cR.x, y: edge.y - 2.6, z: cR.z },
-        { x: cL.x, y: edge.y - 2.6, z: cL.z },
+        { x: cL.x, y: cL.y, z: cL.z },
+        { x: cR.x, y: cR.y, z: cR.z },
+        { x: cR.x, y: cR.y - 2.6, z: cR.z },
+        { x: cL.x, y: cL.y - 2.6, z: cL.z },
       ];
       for (const t of buildFace(cpts, CAP_COLOR, camera)) out.push(t);
     };
@@ -196,19 +196,27 @@ export function buildTrackTris(track, tex, camera, frame) {
   return out;
 }
 
+/** Banked lateral edge — matches spline-editor ribbonCorners / edgeCorner. */
 function edgePt(sample, side, lat) {
+  const b = (sample.bank || 0) * Math.PI / 180;
+  const cb = Math.cos(b), sb = Math.sin(b);
   return {
-    x: sample.x + sample.px * side * lat,
-    y: sample.y,
-    z: sample.z + sample.pz * side * lat,
+    x: sample.x + sample.px * cb * side * lat,
+    y: sample.y + sb * side * lat,
+    z: sample.z + sample.pz * cb * side * lat,
   };
 }
 
-// Point at fractional distance f along segment a→b, lateral offset l
+// Point at fractional distance f along segment a→b, lateral offset l (bank-aware)
 function lerpEdge(a, b, f, l) {
-  return {
-    x: a.x + (b.x - a.x) * f + a.px * l,
-    y: a.y + (b.y - a.y) * f + 0.02,
-    z: a.z + (b.z - a.z) * f + a.pz * l,
+  const p = {
+    x: a.x + (b.x - a.x) * f,
+    y: a.y + (b.y - a.y) * f,
+    z: a.z + (b.z - a.z) * f,
+    px: a.px, pz: a.pz,
+    bank: (a.bank || 0) + ((b.bank || 0) - (a.bank || 0)) * f,
   };
+  const e = edgePt(p, Math.sign(l) || 1, Math.abs(l));
+  e.y += 0.02;
+  return e;
 }
