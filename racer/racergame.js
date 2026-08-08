@@ -9,9 +9,9 @@
 import {
   createRenderer, clearSky, present, setFogDistance,
   drawTriangle, drawTexturedTriangle, drawPixelW, drawBillboardSprite,
-  buildTexturedFace, project, rgba,
+  buildTexturedFace, project, rgba, drawRect,
 } from "../engine/renderer.js";
-import { sinDeg, cosDeg, scaleAtX, HALF_W } from "../engine/luts.js";
+import { sinDeg, cosDeg, scaleAtX, HALF_W, SCREEN_W, SCREEN_H } from "../engine/luts.js";
 import { InputController, BTN_FLAGS } from "../engine/input.js";
 import { loadTexture } from "../engine/textureloader.js";
 import { assetUrl } from "../engine/asseturls.js";
@@ -21,6 +21,7 @@ import { createVehicle, stepVehicle } from "./vehicle.js";
 import { createChaseCam, updateChaseCam, snapChaseCam } from "./chasecam.js";
 import { prepareVehicleMesh, buildVehicleTris, getHeadlightRig } from "./vehiclemesh.js";
 import { buildTrackTris } from "./trackrender.js";
+import { drawGlobePlaceholder, drawGlobeCrosshair } from "./trackglobe.js";
 import { drawRacerHUD } from "./racerhud.js";
 import { TitleIntro } from "./titleintro.js";
 import { MenuController } from "./menus.js";
@@ -50,6 +51,10 @@ const MAX_FRAME_MS = 100;
 // fills at the same pace as the boot intro's LOAD phase (LOAD_T) so the two
 // are visually identical, then drops into MENU.
 const LOADING_T = 180;
+
+// Flat backdrop behind the MAIN/GAMEMODES/COURSES/etc. menu screens — the 3D
+// orbiting track scene used to render back there; now it's just this.
+const MENU_BG = rgba(9, 8, 15);
 
 const SMOKE_COLORS = [rgba(200, 200, 205), rgba(80, 165, 255), rgba(255, 150, 50), rgba(200, 90, 255)];
 const BOOST_COLORS = [rgba(255, 200, 80), rgba(255, 120, 40), rgba(255, 240, 180)];
@@ -186,7 +191,8 @@ export class RacerGame {
   /** Build a level's runtime state (track, vehicle, chase cam, scenery).
    *  Resolves only through the levels.js list. Safe to call repeatedly —
    *  unloads + swaps. Stale async resolves are ignored via _loadGen.
-   *  opts.preview: skip audio duck/fade (course-select backdrop swaps). */
+   *  opts.preview: skip audio duck/fade (used by the COURSES preloader in
+   *  _tick — see the "Live course-select preload" comment below). */
   async loadLevel(idx, opts) {
     const preview = !!(opts && opts.preview);
     const gen = ++this._loadGen;
@@ -273,8 +279,10 @@ export class RacerGame {
       if (this.intro.finished) { this.state = "MENU"; this.menu.reset(); }
     } else if (this.state === "MENU") {
       const play = this.menu.tick(this.input) === "PLAY";
-      // Live course-select preview: swap the orbiting backdrop to the
-      // highlighted LEVELS entry (elevation / ribbon visible behind the UI).
+      // Live course-select preload: as the player scrubs through LEVELS in
+      // COURSES, quietly resolve+cache each highlighted track ahead of time
+      // (no visible backdrop anymore — see trackglobe.js) so pressing PLAY
+      // hits an already-resolved track instead of a cold load.
       if (this.menu.mode === "COURSES" &&
           this.menu.courseRow !== this._previewIdx &&
           !this._raceStartPending) {
@@ -301,8 +309,8 @@ export class RacerGame {
       } else if (r === "QUIT") {
         // Quit to main menu: a loading screen matching the boot intro's LOAD
         // bar, with the last track's sky orbiting behind it. Teardown of the
-        // old level + rebuild of the MENU backdrop happens after the bar fills
-        // (see the LOADING branch in the step loop).
+        // old level + a fresh preload of the selected level happens after the
+        // bar fills (see the LOADING branch in the step loop).
         this.unloadLevel();
         this._loadingT = 0;
         this._menuLoadPending = false;
@@ -322,8 +330,8 @@ export class RacerGame {
         this._loadingT++;
         this._titleAngle += 0.15;
         if (this._loadingT >= LOADING_T && !this._menuLoadPending) {
-          // Bar is full — rebuild the MENU backdrop from the levels list,
-          // then settle into MENU once the async resolve finishes.
+          // Bar is full — preload the selected level (track/vehicle/cam) so
+          // it's ready to go, then settle into MENU once that resolves.
           this._menuLoadPending = true;
           this.loadLevel(this.levelIdx).then(() => {
             this._menuLoadPending = false;
@@ -528,31 +536,30 @@ export class RacerGame {
       return;
     }
 
-    // Main menu orbits the track center; other states use the chase cam
+    // Main menu no longer renders the 3D orbiting track scene. Flat dark
+    // backdrop everywhere, except COURSES, which gets the placeholder globe
+    // as its full-screen background — the course list/name/description
+    // widgets (menus.js _drawCourses) render as an overlay on top of it.
+    // The globe itself is static (no frame passed in) — the wireframe track
+    // hologram drawn on top of it in the COURSES panel is what spins.
+    if (this.state === "MENU") {
+      drawRect(rd, 0, 0, SCREEN_W, SCREEN_H, MENU_BG, true);
+      if (this.menu.mode === "COURSES") {
+        drawGlobePlaceholder(rd, 0, 0, SCREEN_W, SCREEN_H);
+        drawGlobeCrosshair(rd, 0, 0, SCREEN_W, SCREEN_H, this.frame);
+      }
+      this.menu.draw(rd, this.hudFonts, this.frame);
+      present(rd, 0, 0);
+      return;
+    }
+
+    // RACE / PAUSE use the chase cam and need a live track + vehicle.
     let cam = this.cam;
     if (!this.track || !v || !cam) {
       clearSky(rd, this._titleAngle + 180, this.frame);
       this.sky.blit(rd, this._titleAngle + 180, 16);
       present(rd, 0, 0);
       return;
-    }
-    if (this.state === "MENU") {
-      const a = this._titleAngle;
-      const v = this.vehicle;
-      // COURSES uses an isometric-style orbit (steeper pitch, farther out)
-      // so elevation reads clearly — same idea as the spline editor iso view.
-      const iso = this.menu.mode === "COURSES";
-      const dist = iso ? 28 : 16;
-      const height = iso ? 18 : 6;
-      const pitch = iso ? 38 : 16;
-      cam = {
-        x: v.x + sinDeg(a) * dist,
-        y: v.y + height,
-        z: v.z + cosDeg(a) * dist,
-        yaw: a + 180,
-        pitch,
-        fovMul: iso ? 0.92 : 1,
-      };
     }
 
     clearSky(rd, cam.yaw, this.frame);
@@ -598,11 +605,9 @@ export class RacerGame {
     }
 
     // ---- HUD ----------------------------------------------------------------------
-    if (this.state === "MENU") this.menu.draw(rd, this.hudFonts, this.frame);
-    else {
-      drawRacerHUD(rd, v, this.frame, this.hudFonts, this.place, this.track, this.lapTimer);
-      if (this.state === "PAUSE") this.menu.draw(rd, this.hudFonts, this.frame);
-    }
+    // Only RACE / PAUSE reach here now (MENU returns early above).
+    drawRacerHUD(rd, v, this.frame, this.hudFonts, this.place, this.track, this.lapTimer);
+    if (this.state === "PAUSE") this.menu.draw(rd, this.hudFonts, this.frame);
 
     // Screen fade during respawn for a clean transition
     const fade = v.respawnT > 0
