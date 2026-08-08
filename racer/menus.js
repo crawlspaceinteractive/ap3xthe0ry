@@ -116,6 +116,12 @@ export class MenuController {
     this._prevY = 0;
     this._held = 0;
     this._scrollHeld = 0;
+    /** Optional () => void — set by RacerGame to flush autosave. */
+    this.onPersist = null;
+  }
+
+  _persist() {
+    if (typeof this.onPersist === "function") this.onPersist();
   }
 
   reset() {
@@ -205,7 +211,7 @@ export class MenuController {
   _tickOptions(e, inp) {
     if (e.down) this.optRow = (this.optRow + 1) % OPT_ROWS;
     if (e.up)   this.optRow = (this.optRow + OPT_ROWS - 1) % OPT_ROWS;
-    if (e.back) { this.mode = "MAIN"; return null; }
+    if (e.back) { this._persist(); this.mode = "MAIN"; return null; }
 
     const hDir = e.axX > 0.4 ? 1 : e.axX < -0.4 ? -1 : 0;
     hDir !== 0 ? this._held++ : (this._held = 0);
@@ -219,7 +225,7 @@ export class MenuController {
 
     if (this.optRow === 2 && (e.confirm || e.left || e.right)) this._toggleFullscreen();
     if (e.confirm && this.optRow === 3) { this.mode = "BINDINGS"; this.bindRow = 0; this._bindReturn = "OPTIONS"; }
-    if (e.confirm && this.optRow === 4) this.mode = "MAIN";
+    if (e.confirm && this.optRow === 4) { this._persist(); this.mode = "MAIN"; }
     return null;
   }
 
@@ -249,13 +255,14 @@ export class MenuController {
     if (e.back) { this.mode = "GAMEMODES"; return null; }
     if (e.confirm) {
       this.selectedLevelIdx = this.courseRow;
+      this._persist();
       return "PLAY";
     }
     return null;
   }
 
   _tickPause(e) {
-    if (e.back) return "RESUME";
+    if (e.back) { this._persist(); return "RESUME"; }
 
     if (e.down) this.pauseRow = (this.pauseRow + 1) % PAUSE_ROWS;
     if (e.up)   this.pauseRow = (this.pauseRow + PAUSE_ROWS - 1) % PAUSE_ROWS;
@@ -272,9 +279,9 @@ export class MenuController {
 
     if (this.pauseRow === 3 && (e.confirm || e.left || e.right)) this._toggleFullscreen();
     if (e.confirm) {
-      if (this.pauseRow === 0) return "RESUME";
+      if (this.pauseRow === 0) { this._persist(); return "RESUME"; }
       if (this.pauseRow === 4) { this.mode = "BINDINGS"; this.bindRow = 0; this._bindReturn = "PAUSE"; }
-      if (this.pauseRow === 5) return "QUIT";
+      if (this.pauseRow === 5) { this._persist(); return "QUIT"; }
     }
     return null;
   }

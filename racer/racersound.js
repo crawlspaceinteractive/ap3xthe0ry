@@ -14,7 +14,8 @@
  * Volume plumbing:
  *   _sfxVol / _musicVol are local multipliers 0..1.
  *   Every per-frame loop volume and one-shot {volume} is scaled by _sfxVol.
- *   Music volume is applied via SDK setMusicVolume (persists automatically).
+ *   Music volume is applied via SDK setMusicVolume.
+ *   Both volumes persist via data/autosave.js.
  */
 import { audio } from "../engine/sdk-audio.js";
 import { TUNE } from "./vehicle.js";
@@ -109,6 +110,7 @@ class RacerSound {
     this._screechVol = 0;
 
     // Volume multipliers (0..1). Every SFX volume is scaled by _sfxVol.
+    // Defaults are used; autosave.js applySnapshot() will restore saved values.
     this._sfxVol = 0.9;
     this._musicVol = 0.8;
 

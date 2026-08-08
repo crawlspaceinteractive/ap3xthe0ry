@@ -1,12 +1,14 @@
 /**
- * persistence.js — .froyo JSON save/load (Spec Section XIII)
+ * persistence.js — JSON save/load (shared Froyo + AP3X racer fields).
  *
- * Persisted via localStorage under "froyo.save". Default file schema:
- *   { sprinkles, lives, unlocked_worlds, input_map }
+ * Persisted via localStorage under "froyo.save". Single document for both
+ * the legacy platformer and the racer (racer* keys). Autosave.js is the
+ * racer-facing API over this store.
  */
 const KEY = "froyo.save";
 
 export const DEFAULT_SAVE = {
+  // ---- Legacy Froyo --------------------------------------------------------
   sprinkles: 0,
   lives: 5,
   worldsCleared: 0,   // Phase 4.3 — highest world number completed (hub unlocks)
@@ -14,6 +16,12 @@ export const DEFAULT_SAVE = {
   input_map: null, // null = use defaults
   fxVolume:  0.8,  // FX master gain (0–1)
   bgmVolume: 0.55, // BGM master gain (0–1)
+
+  // ---- AP3X racer (autosave.js) --------------------------------------------
+  racerSfxVol: 0.9,
+  racerMusicVol: 0.8,
+  selectedLevelIdx: 0,
+  // Future: bestLaps: {}, unlocks: [], …
 };
 
 export function loadSave() {

@@ -16,7 +16,7 @@ import { InputController, BTN_FLAGS } from "../engine/input.js";
 import { loadTexture } from "../engine/textureloader.js";
 import { assetUrl } from "../engine/asseturls.js";
 import { loadGLBMeshIfAvailable } from "../engine/geometry.js";
-import { getLevelDef, findLevelIndex, resolveLevelTrack, hydrateLevels } from "./levels.js";
+import { getLevelDef, findLevelIndex, resolveLevelTrack, hydrateLevels, levelCount } from "./levels.js";
 import { createVehicle, stepVehicle } from "./vehicle.js";
 import { createChaseCam, updateChaseCam, snapChaseCam } from "./chasecam.js";
 import { prepareVehicleMesh, buildVehicleTris, getHeadlightRig } from "./vehiclemesh.js";
@@ -31,17 +31,19 @@ import { createLapTimer, stepLapTimer, resetLapTimer } from "./laptimer.js";
 import { racerSound } from "./racersound.js";
 import { createSkyLayers } from "./sky.js";
 import { createScenery } from "./scenery.js";
+import { loadAutosave, applySnapshot, captureSnapshot, saveAutosave } from "../data/autosave.js";
 
-/** Authoring hook: ?level=hill-test or ?level=1 (resolved after manifest hydrate). */
+/** Authoring hook: ?level=hill-test or ?level=1 (resolved after manifest hydrate).
+ *  Returns { idx, fromQuery }. */
 function levelIdxFromQuery() {
   try {
     const q = typeof location !== "undefined" ? new URLSearchParams(location.search).get("level") : null;
-    if (q == null || q === "") return 0;
-    if (/^\d+$/.test(q)) return Math.max(0, parseInt(q, 10) | 0);
+    if (q == null || q === "") return { idx: 0, fromQuery: false };
+    if (/^\d+$/.test(q)) return { idx: Math.max(0, parseInt(q, 10) | 0), fromQuery: true };
     const byId = findLevelIndex(q);
-    return byId >= 0 ? byId : 0;
+    return { idx: byId >= 0 ? byId : 0, fromQuery: byId >= 0 };
   } catch (_) {
-    return 0;
+    return { idx: 0, fromQuery: false };
   }
 }
 
@@ -94,6 +96,9 @@ export class RacerGame {
     this.state = "INTRO";           // warning card → title cinematic → load bar
     this.intro = new TitleIntro();
     this.menu = new MenuController();
+    this.menu.onPersist = () => {
+      saveAutosave(captureSnapshot(racerSound, this));
+    };
     this._assetsReady = false;
     this.frame = 0;
     this.levelIdx = 0;             // finalized after hydrateLevels in _load
@@ -157,7 +162,14 @@ export class RacerGame {
     // Scan assets/3D/maps/manifest.json into LEVELS before resolving ?level=
     // or loading the first course.
     await hydrateLevels();
-    this.levelIdx = levelIdxFromQuery();
+
+    const snap = loadAutosave();
+    applySnapshot(snap, racerSound);
+
+    const q = levelIdxFromQuery();
+    const n = Math.max(1, levelCount());
+    const savedIdx = Math.max(0, Math.min(n - 1, snap.selectedLevelIdx | 0));
+    this.levelIdx = q.fromQuery ? Math.max(0, Math.min(n - 1, q.idx)) : savedIdx;
     this.menu.selectedLevelIdx = this.levelIdx;
     this.menu.courseRow = this.levelIdx;
     this._previewIdx = this.levelIdx;
