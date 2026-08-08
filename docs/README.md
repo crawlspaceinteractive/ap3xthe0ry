@@ -1,10 +1,12 @@
 # AP3X THE0RY (crawlspaceEngine racer)
 
 A PS1-style software-rasterized arcade racer built on the shared Crawlspace
-engine. All rendering is CPU-side into a low-res framebuffer — no WebGL for
-visuals (Three.js is used only to parse GLB models). A drifting arcade
-vehicle laps a closed spline track under a parallax fuji-sky, with a neon
-summit aesthetic and a steel-numeral sprite HUD.
+engine. All rendering is CPU-side into a low-res framebuffer - no WebGL for
+visuals (Three.js is used only to parse GLB models).
+
+## Run In-Browser
+
+https://crawlspaceinteractive.github.io/ap3xthe0ry/
 
 ## Run locally
 
