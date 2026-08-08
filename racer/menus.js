@@ -27,8 +27,8 @@ import { LEVELS, levelCount } from "./levels.js";
 import {
   drawBigText, measureBigText, drawBodyText, measureBodyText,
 } from "./hudfont.js";
+import { getPreview, drawHologram } from "./trackpreview.js";
 
-const PANEL  = rgba(20, 14, 36);
 const ACCENT = rgba(255, 128, 8);
 const WHITE  = rgba(255, 255, 255);
 const DIM    = rgba(140, 120, 160);
@@ -82,7 +82,10 @@ function wrapText(text, maxChars) {
   const out = [];
   for (const raw of text.split("\n")) {
     let line = raw.replace(/\t/g, "  ");
-    if (!line.trim()) { out.push(""); continue; }
+    if (!line.trim()) {
+      out.push("");
+      continue;
+    }
     while (line.length > maxChars) {
       let cut = line.lastIndexOf(" ", maxChars);
       if (cut < maxChars * 0.5) cut = maxChars;
@@ -100,19 +103,19 @@ export class MenuController {
     this.row = 0;
     this.gamemodeRow = 0;
     this.courseRow = 0;
-    this.selectedLevelIdx = 0; // set when COURSES confirms → PLAY
+    this.selectedLevelIdx = 0;
     this.noticeMode = null;
     this.optRow = 0;
     this.bindRow = 0;
     this.pauseRow = 0;
-    this._bindReturn = "OPTIONS"; // where BINDINGS backs out to
-    this.capture = null;       // action key being rebound, or null
-    this.aboutLines = null;    // wrapped README+CHANGELOG lines
+    this._bindReturn = "OPTIONS";
+    this.capture = null;
+    this.aboutLines = null;
     this.aboutScroll = 0;
     this._prevX = 0;
     this._prevY = 0;
-    this._held = 0;            // slider auto-repeat
-    this._scrollHeld = 0;      // about auto-repeat
+    this._held = 0;
+    this._scrollHeld = 0;
   }
 
   reset() {
@@ -122,7 +125,6 @@ export class MenuController {
     this.courseRow = Math.max(0, Math.min(levelCount() - 1, this.selectedLevelIdx | 0));
   }
 
-  /** Enter course select, optionally seeding the highlight from the last race. */
   enterCourses(levelIdx) {
     const n = levelCount();
     const idx = levelIdx != null ? levelIdx | 0 : this.selectedLevelIdx | 0;
@@ -130,8 +132,6 @@ export class MenuController {
     this.courseRow = Math.max(0, Math.min(Math.max(0, n - 1), idx));
   }
 
-  /** Enter the in-race pause menu. Pass the InputController so axis
-   *  edge-detection starts clean (no phantom first move). */
   enterPause(inp) {
     this.mode = "PAUSE";
     this.pauseRow = 0;
@@ -157,10 +157,8 @@ export class MenuController {
     return e;
   }
 
-  /** Per display frame while in MENU state. Returns "PLAY" to start racing. */
   tick(inp) {
     this._inputRef = inp;
-    // Key-capture mode swallows everything until a key lands.
     if (this.capture) {
       const code = inp.firstPulse();
       if (code) {
@@ -209,7 +207,6 @@ export class MenuController {
     if (e.up)   this.optRow = (this.optRow + OPT_ROWS - 1) % OPT_ROWS;
     if (e.back) { this.mode = "MAIN"; return null; }
 
-    // Sliders (rows 0/1) — same auto-repeat behavior as the pause menu.
     const hDir = e.axX > 0.4 ? 1 : e.axX < -0.4 ? -1 : 0;
     hDir !== 0 ? this._held++ : (this._held = 0);
     const fire = (e.left || e.right) || this._held === 1 ||
@@ -247,7 +244,6 @@ export class MenuController {
     if (n <= 0) { this.mode = "GAMEMODES"; return null; }
     if (e.down) this.courseRow = (this.courseRow + 1) % n;
     if (e.up)   this.courseRow = (this.courseRow + n - 1) % n;
-    // Left/right also scroll so a long list feels like a course picker.
     if (e.right) this.courseRow = (this.courseRow + 1) % n;
     if (e.left)  this.courseRow = (this.courseRow + n - 1) % n;
     if (e.back) { this.mode = "GAMEMODES"; return null; }
@@ -259,15 +255,11 @@ export class MenuController {
   }
 
   _tickPause(e) {
-    // Back always resumes (B / Backspace). Enter/START is a plain confirm key
-    // here too — it fires the selected row (row 0 = RESUME), not a hidden
-    // toggle, keeping the whole interface on one confirm path.
     if (e.back) return "RESUME";
 
     if (e.down) this.pauseRow = (this.pauseRow + 1) % PAUSE_ROWS;
     if (e.up)   this.pauseRow = (this.pauseRow + PAUSE_ROWS - 1) % PAUSE_ROWS;
 
-    // Sliders (rows 1/2) with auto-repeat.
     const hDir = e.axX > 0.4 ? 1 : e.axX < -0.4 ? -1 : 0;
     hDir !== 0 ? this._held++ : (this._held = 0);
     const fire = (e.left || e.right) || this._held === 1 ||
@@ -342,7 +334,7 @@ export class MenuController {
 
     if (this.mode === "MAIN") this._drawMain(rd, fonts, useSprite, frame);
     else if (this.mode === "GAMEMODES") this._drawGameModes(rd, fonts, useSprite);
-    else if (this.mode === "COURSES") this._drawCourses(rd, fonts, useSprite);
+    else if (this.mode === "COURSES") this._drawCourses(rd, fonts, useSprite, frame);
     else if (this.mode === "NOTICE") this._drawNotice(rd, fonts, useSprite);
     else if (this.mode === "CONTROLS") this._drawControls(rd, fonts, useSprite);
     else if (this.mode === "OPTIONS") this._drawOptions(rd, fonts, useSprite);
@@ -418,7 +410,7 @@ export class MenuController {
     this._hint(rd, fonts, useSprite, "W/S:SEL  ENTER/SPC:OK  ESC:BACK");
   }
 
-  _drawCourses(rd, fonts, useSprite) {
+  _drawCourses(rd, fonts, useSprite, frame) {
     this._header(rd, fonts, useSprite, "COURSE");
     const n = levelCount();
     if (n <= 0) {
@@ -427,41 +419,30 @@ export class MenuController {
       return;
     }
 
-    // Windowed list so many maps still fit the 240px framebuffer.
-    const VISIBLE = 4;
-    const rowH = 22;
-    let start = Math.max(0, this.courseRow - ((VISIBLE / 2) | 0));
-    if (start + VISIBLE > n) start = Math.max(0, n - VISIBLE);
-    let y = 48;
-    for (let i = start; i < Math.min(n, start + VISIBLE); i++) {
-      const lev = LEVELS[i];
-      const name = (lev && lev.name) || lev.id || ("COURSE " + (i + 1));
-      const s = i === this.courseRow;
-      const w = useSprite ? measureBodyText(fonts, name, 18, 1) : name.length * 9;
-      const x = (SCREEN_W - w) >> 1;
-      if (s && (performance.now() / 400 | 0) & 1) drawText(rd, ">", x - 16, y + 2, SEL, 2);
-      this._body(rd, fonts, useSprite, name, x, y, 18, s ? SEL : WHITE);
-      y += rowH;
-    }
+    // Course list itself is invisible now — courseRow/selectedLevelIdx still
+    // drive selection via _tickCourses exactly as before, it just renders no
+    // glyphs (no name rows, no ">" selector, no scroll arrows/index label).
+    // The globe + hologram + name/desc below are the only visible readout.
 
-    // Desc under the list (selected course).
+    const PX = 114, PY = 30, PW = 196, PH = 122;
+
     const sel = LEVELS[this.courseRow];
+    const nameLabel = ((sel && sel.name) || "").toUpperCase().slice(0, 20);
+    this._body(rd, fonts, useSprite, nameLabel, PX + 6, PY + 4, 10, ACCENT);
+
+    const preview = getPreview(sel);
+    drawHologram(rd, preview, PX + 4, PY + 16, PW - 8, PH - 22, frame || 0);
+
     const desc = (sel && sel.desc) || "";
     if (desc) {
-      const lines = wrapText(desc.toUpperCase(), 36).slice(0, 3);
-      let dy = 48 + VISIBLE * rowH + 6;
+      const lines = wrapText(desc.toUpperCase(), 46).slice(0, 2);
+      let dy = PY + PH + 12;
       for (const line of lines) {
-        this._bodyCentered(rd, fonts, useSprite, line, dy, 11, DIM);
-        dy += 13;
+        this._bodyCentered(rd, fonts, useSprite, line, dy, 10, DIM);
+        dy += 12;
       }
     }
 
-    // Scroll chevrons when the window doesn't cover the full list.
-    if (start > 0) drawText(rd, "^", SCREEN_W - 14, 48, SEL, 2);
-    if (start + VISIBLE < n) drawText(rd, "v", SCREEN_W - 14, 48 + VISIBLE * rowH - 10, SEL, 2);
-
-    const idxLabel = (this.courseRow + 1) + "/" + n;
-    this._bodyCentered(rd, fonts, useSprite, idxLabel, SCREEN_H - 28, 10, DIM);
     this._hint(rd, fonts, useSprite, "W/S:SEL  ENTER:RACE  ESC:BACK");
   }
 
@@ -585,7 +566,6 @@ export class MenuController {
         if (this.aboutLines[i]) this._body(rd, fonts, useSprite, this.aboutLines[i], 12, y, size, WHITE);
         y += lineH;
       }
-      // Scroll indicators
       if (this.aboutScroll > 0) drawText(rd, "^", SCREEN_W - 14, 42, SEL, 2);
       if (this.aboutScroll + maxLines < this.aboutLines.length) drawText(rd, "v", SCREEN_W - 14, SCREEN_H - 34, SEL, 2);
     }
