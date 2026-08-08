@@ -17,18 +17,18 @@ import { tunable } from "../engine/tunable.js";
 const S = (min, max, step) => ({ min, max, step, restart: false });
 
 const CAM = tunable("chasecam", {
-  baseDist:   5.6,
-  distSpeed:  3.0,   // + per unit of speed
-  baseHeight: 2.3,
-  heightSpeed: 0.9,
-  yawLag:     0.14,  // normal follow tightness
+  baseDist:   2,
+  distSpeed:  0,     // + per unit of speed
+  baseHeight: 1,
+  heightSpeed: 0,
+  yawLag:     0.205, // normal follow tightness
   yawLagDrift: 0.075,
   latMax:     2.2,   // max drift lateral offset
   latRate:    0.09,
-  lookAhead:  4.5,   // aim this far ahead of the car
-  lookHeight: 1.35,  // aim height above car
-  fovRate:    0.07,
-  floorPad:   1.0,
+  lookAhead:  12,    // aim this far ahead of the car
+  lookHeight: 0,     // aim height above car
+  fovRate:    0.3,
+  floorPad:   0.5,
 }, {
   baseDist:    S(2.0, 14.0, 0.1),
   distSpeed:   S(0.0, 8.0, 0.1),

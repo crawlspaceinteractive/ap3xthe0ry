@@ -18,7 +18,9 @@
  */
 import { audio } from "../engine/sdk-audio.js";
 import { TUNE } from "./vehicle.js";
+import { assetUrl } from "../engine/asseturls.js";
 
+// Nested asset paths (Git layout); assetUrl() maps each to the flat CDN URL.
 const MUSIC_TRACKS = [
   "assets/audio/soundtrack/1._collector.mp3",
   "assets/audio/soundtrack/2._hoarder.mp3",
@@ -42,32 +44,32 @@ const MUSIC_TRACKS = [
   "assets/audio/soundtrack/20._rollcage.mp3",
   "assets/audio/soundtrack/21._close_shave.mp3",
   "assets/audio/soundtrack/22._u-turn.mp3",
-];
+].map(f => assetUrl(f));
 
 // SFX definitions: file-based across the board.
 const SFX = {
   engine: {
-    src: "assets/audio/sounds/sfx_engine_loop.mp3",
+    src: assetUrl("assets/audio/sounds/sfx_engine_loop.mp3"),
     group: "sfx",
   },
   screech: {
-    src: "assets/audio/sounds/sfx_screech_loop.mp3",
+    src: assetUrl("assets/audio/sounds/sfx_screech_loop.mp3"),
     group: "sfx",
   },
   crash: {
-    src: "assets/audio/sounds/sfx_crash.mp3",
+    src: assetUrl("assets/audio/sounds/sfx_crash.mp3"),
     group: "sfx",
   },
   crunch: {
-    src: "assets/audio/sounds/sfx_crunch.mp3",
+    src: assetUrl("assets/audio/sounds/sfx_crunch.mp3"),
     group: "sfx",
   },
   boost: {
-    src: "assets/audio/sounds/sfx_boost.mp3",
+    src: assetUrl("assets/audio/sounds/sfx_boost.mp3"),
     group: "sfx",
   },
   tierup: {
-    src: "assets/audio/sounds/sfx_tierup.mp3",
+    src: assetUrl("assets/audio/sounds/sfx_tierup.mp3"),
     group: "sfx",
   },
 };
@@ -110,6 +112,12 @@ class RacerSound {
     this._sfxVol = 0.9;
     this._musicVol = 0.8;
 
+    // Music fade multiplier (0..1) — separate from the user's _musicVol so
+    // fades never clobber the stored preference. setMusicVol still writes the
+    // raw preference; the SDK gets preference × fade.
+    this._musicFade = 1;
+    this._musicFadeTimer = null;
+
     // Event edge-detection
     this._prevWallHitT = 0;
     this._prevLandT = 0;
@@ -137,9 +145,54 @@ class RacerSound {
     this._sfxVol = Math.max(0, Math.min(1, v));
   }
 
+  /** Push the current preference × fade into the SDK music gain. */
+  _applyMusicVol() {
+    audio.setMusicVolume(this._musicVol * this._musicFade);
+  }
+
+  /** Write the user's raw music preference (called from volume sliders). */
   setMusicVol(v) {
     this._musicVol = Math.max(0, Math.min(1, v));
-    audio.setMusicVolume(this._musicVol);
+    this._applyMusicVol();
+  }
+
+  /** Ramp the music fade multiplier from its current value to `to` (0..1)
+   *  over `ms`. One interval animates the fade; a new call replaces any
+   *  in-flight fade. */
+  fadeMusic(to, ms) {
+    if (this._musicFadeTimer) { clearInterval(this._musicFadeTimer); this._musicFadeTimer = null; }
+    const from = this._musicFade;
+    if (to === from) return;
+    const steps = Math.max(1, Math.round(ms / 50));
+    const stepMs = ms / steps;
+    let i = 0;
+    this._musicFadeTimer = setInterval(() => {
+      i++;
+      this._musicFade = from + (to - from) * Math.min(1, i / steps);
+      this._applyMusicVol();
+      if (i >= steps) { clearInterval(this._musicFadeTimer); this._musicFadeTimer = null; }
+    }, stepMs);
+  }
+
+  /** Fade the music down to nothing (level teardown / quit to menu). */
+  fadeOutMusic(ms) { this.fadeMusic(0, ms); }
+
+  /** One-shot engine rev — played when START is pressed on the title screen.
+   *  Plays for 1s, then fades out over ~0.4s and stops. */
+  async rev() {
+    await this._ready;
+    const v0 = 0.75 * this._sfxVol;
+    const h = audio.play("engine", { volume: v0, rate: 1.45 });
+    if (!h) return;
+    setTimeout(() => {
+      const steps = 12, ms = 400 / steps;
+      let i = 0;
+      const iv = setInterval(() => {
+        i++;
+        try { h.setVolume(v0 * Math.max(0, 1 - i / steps)); } catch (_) {}
+        if (i >= steps) { clearInterval(iv); try { h.stop(); } catch (_) {} }
+      }, ms);
+    }, 1000);
   }
 
   /** Call once, on the first transition into RACE (i.e. after a user gesture). */
@@ -154,6 +207,8 @@ class RacerSound {
       this._musicOn = true;
       this._nextTrack();
     }
+    // Bring the music back up after a teardown fade-out.
+    this.fadeMusic(1, 500);
   }
 
   /** Per fixed step (60 Hz) while racing. */

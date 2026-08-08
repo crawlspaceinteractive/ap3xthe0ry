@@ -155,45 +155,30 @@ function lerpColor(a, b, t) {
 // (SCREEN_W evaluations) followed by a plain integer comparison per pixel row.
 const _cloudMask = new Uint8Array(SCREEN_W);
 
-// Clear framebuffer with sky gradient + simple star dots near top.
+// Checkered flag sea — a scrolling racing-flag backdrop. The horizontal
+// offset is driven by cameraYaw so the whole pattern glides as the view
+// pans/orbits. In the main menu the RacerGame orbits the track center, so
+// the checkers stream horizontally behind the header — an "animated" skyline
+// the title sits in front of.
+const CHECKER_CELL = 96;      // square side in 320x240 framebuffer px
+const CHECKER_A   = rgba(244, 244, 248);
+const CHECKER_B   = rgba(18,  20,  26);
+
+// Clear framebuffer with the checkered flag pattern + depth reset.
 export function clearSky(rd, cameraYaw, frame) {
-  const { buf32, skyRows, depth } = rd;
+  const { buf32, depth } = rd;
+  const yawShift = (cameraYaw * 11) | 0; // glides with yaw → menu animation
   for (let y = 0; y < SCREEN_H; y++) {
-    const c = skyRows[y];
     const row = y * SCREEN_W;
-    buf32.fill(c, row, row + SCREEN_W);
-    depth.fill(Infinity, row, row + SCREEN_W);
-  }
-  // Star field in top region — pseudo-stationary relative to yaw (simple parallax)
-  const yawShift = (cameraYaw * 5.6) | 0;
-  for (let i = 0; i < 80; i++) {
-    const sx = ((i * 73) - yawShift) % SCREEN_W;
-    const x = ((sx + SCREEN_W) % SCREEN_W) | 0;
-    const y = ((i * 37) % (SCREEN_H * 0.45)) | 0;
-    const c = rgba(220 + ((i * 13) & 31), 220 + ((i * 7) & 31), 240);
-    buf32[y * SCREEN_W + x] = c;
-  }
-  // Distant cloud band — precompute per-column mask (one pass, SCREEN_W sin evals)
-  // then stamp each cloud row without any transcendentals in the inner loop.
-  const yCloudStart = (SCREEN_H * 0.42) | 0;
-  const yCloudEnd   = (SCREEN_H * 0.52) | 0;
-  // Use a fixed representative Y for the cloud shape (midpoint of cloud band)
-  const yCloudMid = (yCloudStart + yCloudEnd) >> 1;
-  for (let x = 0; x < SCREEN_W; x++) {
-    const xs = x; // stationary mountain/cloud layer
-    const n = (Math.sin(xs * 0.013) + Math.sin(xs * 0.03 + yCloudMid * 0.2)) * 0.5;
-    _cloudMask[x] = n > 0.5 ? 1 : 0;
-  }
-  // Cloud gradient: pink at top, dark blue at bottom
-  const CLOUD_PINK      = rgba(255, 160, 200);  // top of cloud band
-  const CLOUD_DARK_BLUE = rgba(30,  20,  80);   // bottom of cloud band
-  for (let y = yCloudStart; y < yCloudEnd; y++) {
-    const row = y * SCREEN_W;
-    const tCloud = (y - yCloudStart) / Math.max(1, yCloudEnd - yCloudStart - 1);
-    const cloudC = lerpColor(CLOUD_PINK, CLOUD_DARK_BLUE, tCloud);
+    const cy = (y / CHECKER_CELL) | 0;
+    const evenRow = (cy & 1) === 0;
     for (let x = 0; x < SCREEN_W; x++) {
-      if (_cloudMask[x]) buf32[row + x] = cloudC;
+      const cx = ((x + yawShift) / CHECKER_CELL) | 0;
+      buf32[row + x] = ((cx + cy) & 1) === 0
+        ? (evenRow ? CHECKER_A : CHECKER_B)
+        : (evenRow ? CHECKER_B : CHECKER_A);
     }
+    depth.fill(Infinity, row, row + SCREEN_W);
   }
 }
 

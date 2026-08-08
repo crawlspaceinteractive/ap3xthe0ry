@@ -25,7 +25,7 @@ const MODEL = tunable("carModel", {
   yawOffset:   180,
   pitchOffset: 0,
   rollOffset:  0,
-  scale:       1.0,
+  scale:       0.6,
 }, {
   offsetX:     S(-2.0, 2.0, 0.01),
   offsetY:     S(-2.0, 2.0, 0.01),

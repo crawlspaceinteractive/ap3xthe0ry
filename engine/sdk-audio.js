@@ -188,6 +188,22 @@ class AudioEngine {
     if (this._sfxGain) this._sfxGain.gain.value = this._sfxVol;
   }
 
+  /**
+   * Unlock the AudioContext after the first user gesture.
+   * Browsers suspend the context until a user gesture (autoplay policy), so a
+   * `play()` call before the first gesture schedules the sound but stays
+   * SILENT until the context resumes — making the sound surface much later
+   * than it was triggered (e.g. the boot-intro crash heard again on the title
+   * screen). Call this on the first gesture to start the context immediately.
+   * @returns {Promise<boolean>} true once the context is running.
+   */
+  unlock() {
+    const ctx = getCtx();
+    if (!ctx) return Promise.resolve(false);
+    if (ctx.state === "running") return Promise.resolve(true);
+    return ctx.resume().then(() => true).catch(() => false);
+  }
+
   getMusicVolume() { return this._musicVol; }
   getSfxVolume() { return this._sfxVol; }
 }

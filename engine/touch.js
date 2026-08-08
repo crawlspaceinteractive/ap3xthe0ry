@@ -196,7 +196,7 @@ export function createTouchOverlay(container, inputCtrl) {
     }
   };
 
-  // ── Initial layout + resize ───────────────────────────────────────────────
+  // ── Initial layout + resize ─────────────────────────���─────────────────────
   layout();
   window.addEventListener("resize", layout);
 

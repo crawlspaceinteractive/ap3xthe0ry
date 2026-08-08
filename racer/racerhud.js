@@ -254,9 +254,16 @@ function drawLapTimer(rd, lt, fonts) {
   const curStr = formatLapTime(lt.curMs);
   const bestColor = lt.bestMs > 0 ? ALERT_RED : 0xffffffff;
 
+  // Once a best lap exists the WHOLE line — numbers included — renders red:
+  // route it through the smallfont/body path (digits are merged into the body
+  // map) so blitGlyph tints the numerals instead of blitting baked steel.
+  const bestRed = lt.bestMs > 0;
+
   let bestW, curW, bestH, curH;
   if (composed) {
-    bestW = measureLapString(fonts, bestStr, LAP_BEST_SIZE);
+    bestW = bestRed
+      ? measureBodyText(fonts, bestStr, LAP_BEST_SIZE, LAP_GAP)
+      : measureLapString(fonts, bestStr, LAP_BEST_SIZE);
     curW = measureLapString(fonts, curStr, LAP_TIME_SIZE);
     bestH = LAP_BEST_SIZE;
     curH = LAP_TIME_SIZE;
@@ -280,7 +287,8 @@ function drawLapTimer(rd, lt, fonts) {
   const curY = py + 3 + bestH + 3;
   const curX = px + ((panelW - curW) >> 1);
   if (composed) {
-    drawLapString(rd, fonts, bestStr, bestX, py + 3, LAP_BEST_SIZE, bestColor);
+    if (bestRed) drawBodyText(rd, fonts, bestStr, bestX, py + 3, LAP_BEST_SIZE, bestColor, LAP_GAP);
+    else drawLapString(rd, fonts, bestStr, bestX, py + 3, LAP_BEST_SIZE, bestColor);
     drawLapString(rd, fonts, curStr, curX, curY, LAP_TIME_SIZE, 0xffffffff);
   } else {
     drawText(rd, bestStr, bestX, py + 3, bestColor, Math.max(1, Math.round(LAP_BEST_SIZE / 5)));
@@ -377,12 +385,18 @@ export function drawTitle(rd, frame, fonts) {
   drawRect(rd, 0, 0, SCREEN_W, SCREEN_H, 0x66000000 | 0, true);
   const useSprite = !!(fonts && fonts.big && fonts.body);
   if (useSprite) {
-    const tw = measureBigText(fonts, "AHURA GP", 68, 2);
-    drawBigText(rd, fonts, "AHURA GP", (SCREEN_W - tw) >> 1, 14, 68, null, 2);
+    // Fit the title/subtitle to the screen width (shrink targetH if needed).
+    const TITLE = "AP3X THE0RY";
+    let th = 68;
+    let tw = measureBigText(fonts, TITLE, th, 2);
+    if (tw > SCREEN_W - 8) { th = Math.max(16, (th * (SCREEN_W - 8) / tw) | 0); tw = measureBigText(fonts, TITLE, th, 2); }
+    drawBigText(rd, fonts, TITLE, (SCREEN_W - tw) >> 1, 14 + ((68 - th) >> 1), th, null, 2);
 
-    const sub = "PS1 ARCADE RACER";
-    const sw = measureBodyText(fonts, sub, 22, 1);
-    drawBodyText(rd, fonts, sub, (SCREEN_W - sw) >> 1, 86, 22, null, 1);
+    const sub = "PS1 Faithful ARCADE RACER";
+    let sh = 22;
+    let sw = measureBodyText(fonts, sub, sh, 1);
+    if (sw > SCREEN_W - 8) { sh = Math.max(8, (sh * (SCREEN_W - 8) / sw) | 0); sw = measureBodyText(fonts, sub, sh, 1); }
+    drawBodyText(rd, fonts, sub, (SCREEN_W - sw) >> 1, 86 + ((22 - sh) >> 1), sh, null, 1);
 
     if (frame & 32) {
       const p = "PRESS ENTER / A TO RACE";
@@ -405,8 +419,8 @@ export function drawTitle(rd, frame, fonts) {
       y += 17;
     }
   } else {
-    drawText(rd, "AHURA GP", (SCREEN_W >> 1) - 120, 26, rgba(255, 210, 70), 6);
-    drawText(rd, "PS1 ARCADE RACER", (SCREEN_W >> 1) - 75, 84, 0xffc0c0d0, 2);
+    drawText(rd, "AP3X THE0RY", (SCREEN_W >> 1) - 120, 26, rgba(255, 210, 70), 6);
+    drawText(rd, "PS1 Faithful ARCADE RACER", (SCREEN_W >> 1) - 75, 84, 0xffc0c0d0, 2);
 
     if (frame & 32) {
       drawText(rd, "PRESS ENTER / A TO RACE", (SCREEN_W >> 1) - 100, 108, 0xffffffff, 2);

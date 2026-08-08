@@ -17,14 +17,15 @@
  */
 import { loadTexture } from "../engine/textureloader.js";
 import { SCREEN_W, SCREEN_H, HALF_H, FOCAL_X, FOCAL_Y } from "../engine/luts.js";
+import { assetUrl } from "../engine/asseturls.js";
 
 // Strip heights scale with the render resolution (fractions of SCREEN_H) so
 // the layers keep the same angular coverage; the 2× upscale doubles them on
 // screen (back 144→288, middle 120→240, front 100→200).
 const LAYER_DEFS = [
-  { url: "assets/2D/textures/fuji_sky_layer_back.png",   targetH: (SCREEN_H * 0.60) | 0, parallax: 0.7  },
-  { url: "assets/2D/textures/fuji_sky_layer_middle.png", targetH: (SCREEN_H * 0.50) | 0, parallax: 1.3  },
-  { url: "assets/2D/textures/fuji_sky_layer_front.png",  targetH: (SCREEN_H * 0.42) | 0, parallax: 2.34 },
+  { url: assetUrl("assets/2D/textures/skies/fuji/fuji_sky_layer_back.png"),   targetH: (SCREEN_H * 0.60) | 0, parallax: 0.7  },
+  { url: assetUrl("assets/2D/textures/skies/fuji/fuji_sky_layer_middle.png"), targetH: (SCREEN_H * 0.50) | 0, parallax: 1.3  },
+  { url: assetUrl("assets/2D/textures/skies/fuji/fuji_sky_layer_front.png"),  targetH: (SCREEN_H * 0.42) | 0, parallax: 2.34 },
 ];
 
 // pxPerDeg: how many screen pixels one degree of yaw scrolls at 1:1 scale.

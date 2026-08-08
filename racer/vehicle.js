@@ -23,57 +23,57 @@ const S = (min, max, step) => ({ min, max, step, restart: false });
 
 export const TUNE = tunable("vehicle", {
   // Speed
-  topSpeed:      1.10,   // world units / frame  (~66 u/s)
-  reverseMax:    0.34,
-  accel:         0.0125,
-  brakeDecel:    0.024,
-  rollingDrag:   0.9955, // per-frame retention with no throttle
-  airDrag:       0.9990,
+  topSpeed:      2.5,    // world units / frame
+  reverseMax:    0.15,
+  accel:         0.002,
+  brakeDecel:    0.05,
+  rollingDrag:   1,      // per-frame retention with no throttle
+  airDrag:       1,
 
   // Steering
-  turnMax:       3.4,    // deg/frame at optimal speed
-  turnSpeedRef:  0.26,   // speed where full turn rate is reached
-  turnHighFalloff: 0.85, // higher = less steering at top speed
-  airSteerMul:   0.30,
+  turnMax:       1.5,    // deg/frame at optimal speed
+  turnSpeedRef:  0.23,   // speed where full turn rate is reached
+  turnHighFalloff: 1.95, // higher = less steering at top speed
+  airSteerMul:   0.05,
 
   // Grip / drift
-  gripLat:       0.72,   // lateral velocity retention (normal)
-  gripLatDrift:  0.945,  // lateral velocity retention (drifting = slidey)
+  gripLat:       0.4,    // lateral velocity retention (normal)
+  gripLatDrift:  0.995,  // lateral velocity retention (drifting = slidey)
   gripLatAir:    0.995,
-  driftMinSpeed: 0.42,
+  driftMinSpeed: 0.5,
   driftMinSteer: 0.25,
-  driftYawBase:  1.25,   // deg/frame auto-rotation while drifting
-  driftYawSteer: 1.35,   // extra deg/frame from steering with the drift
-  driftFwdDrag:  0.9975,
-  handbrakeDrag: 0.975,  // straight-line handbrake (no drift)
+  driftYawBase:  0.7,    // deg/frame auto-rotation while drifting
+  driftYawSteer: 1.15,   // extra deg/frame from steering with the drift
+  driftFwdDrag:  0.99,
+  handbrakeDrag: 1,      // straight-line handbrake (no drift)
 
   // Drift charge → boost (tiers 1/2/3: blue / orange / purple)
-  chargeRate:    1.0,    // per frame scaled by drift angle
-  tierCharge1:   55,
-  tierCharge2:   130,
-  tierCharge3:   230,
-  tierBoost1:    22,     // boost duration (frames) per tier
-  tierBoost2:    42,
-  tierBoost3:    68,
-  boostAccel:    0.030,
-  boostTopMul:   1.24,
+  chargeRate:    4,      // per frame scaled by drift angle
+  tierCharge1:   15,
+  tierCharge2:   75,
+  tierCharge3:   150,
+  tierBoost1:    15,     // boost duration (frames) per tier
+  tierBoost2:    50,
+  tierBoost3:    100,
+  boostAccel:    0.005,
+  boostTopMul:   1.8,
 
   // Vertical
-  gravity:       0.034,
-  maxFall:       1.00,
-  rampLipBoost:  0.16,   // extra vy at a flagged ramp lip
-  launchDropGate: 0.30,  // ground dropping faster than this/frame → airborne
-  landHardVy:    -0.34,
-  landHardLoss:  0.955,  // speed retention on a hard landing
-  airPitchRate:  3.4,    // deg/frame in-air pitch control
-  flipRewardDeg: 300,
-  flipBoostFrames: 45,
+  gravity:       0.012,
+  maxFall:       2.5,
+  rampLipBoost:  0.6,    // extra vy at a flagged ramp lip
+  launchDropGate: 1,     // ground dropping faster than this/frame → airborne
+  landHardVy:    -0.05,
+  landHardLoss:  0.7,    // speed retention on a hard landing
+  airPitchRate:  1,      // deg/frame in-air pitch control
+  flipRewardDeg: 120,
+  flipBoostFrames: 180,
 
   // Walls
-  carRadius:     0.1,
-  wallBounce:    1.0,
-  wallSpeedLoss: 0.25,   // scaled by impact normal speed
-  wallStickyDrag: 0.2, // shallow-angle high-speed anti-wall-riding drag
+  carRadius:     0.05,
+  wallBounce:    1.5,
+  wallSpeedLoss: 0,      // scaled by impact normal speed
+  wallStickyDrag: -0.005, // shallow-angle high-speed anti-wall-riding drag
   wallTopHeight: 0.5,    // walls only block below this height above road
 
   // Respawn
@@ -117,10 +117,10 @@ export const TUNE = tunable("vehicle", {
   airPitchRate:   S(1.0, 8.0, 0.1),
   flipRewardDeg:  S(120, 360, 10),
   flipBoostFrames:S(10, 180, 5),
-  carRadius:      S(0.4, 2.5, 0.05),
-  wallBounce:     S(0.0, 1.0, 0.02),
+  carRadius:      S(0.05, 2.5, 0.05),
+  wallBounce:     S(0.0, 2.0, 0.02),
   wallSpeedLoss:  S(0.0, 1.5, 0.05),
-  wallStickyDrag: S(0.9, 1.0, 0.001),
+  wallStickyDrag: S(-0.05, 1.0, 0.001),
   wallTopHeight:  S(0.5, 6.0, 0.1),
   fallKillDepth:  S(5, 80, 1),
   respawnFrames:  S(10, 180, 5),

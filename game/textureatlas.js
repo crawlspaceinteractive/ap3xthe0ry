@@ -2,20 +2,22 @@
 // Central texture path + biome zone registry.
 // Asset URLs injected from user-provided uploads.
 
+import { assetUrl } from "../engine/asseturls.js";
+
 export const TEXTURE_BASE = "./textures/"; // kept for legacy reference
 
 export const TEX = {
   terrain: {
-    grass:    "assets/2D/textures/grass.png",
-    dirt:     "assets/2D/textures/dirt.png",
-    rock:     "assets/2D/textures/rock.png",
-    sand:     "assets/2D/textures/sand.png",
-    snow:     "assets/2D/textures/snow.png",
-    ice:      "assets/2D/textures/ice.png",
-    candy:    "assets/2D/textures/candy.png",
-    volcanic: "assets/2D/textures/volcanic.png",
-    water_a:  "assets/2D/textures/water_a.png",
-    water_b:  "assets/2D/textures/water_b.png",
+    grass:    assetUrl("assets/2D/textures/base/grass.png"),
+    dirt:     assetUrl("assets/2D/textures/base/dirt.png"),
+    rock:     assetUrl("assets/2D/textures/base/rock.png"),
+    sand:     assetUrl("assets/2D/textures/base/sand.png"),
+    snow:     assetUrl("assets/2D/textures/base/snow.png"),
+    ice:      assetUrl("assets/2D/textures/base/ice.png"),
+    candy:    assetUrl("assets/2D/textures/base/candy.png"),
+    volcanic: assetUrl("assets/2D/textures/base/volcanic.png"),
+    water_a:  assetUrl("assets/2D/textures/base/water_a.png"),
+    water_b:  assetUrl("assets/2D/textures/base/water_b.png"),
   },
 
   effects: {
