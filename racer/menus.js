@@ -4,11 +4,11 @@
  *
  *   MAIN      PLAY / CONTROLS / OPTIONS / ABOUT
  *   GAMEMODES the PLAY submenu: SINGLE RACE / TIME ATTACK / HEAD2HEAD.
- *             TIME ATTACK is the current build's mode (starts the race);
- *             SINGLE RACE + HEAD2HEAD are "later" modes and drop into
- *             NOTICE instead.
- *   NOTICE    unavailable-mode message ("not available in this demo");
- *             back/confirm returns to GAMEMODES.
+ *             TIME ATTACK opens COURSES; SINGLE RACE + HEAD2HEAD drop into
+ *             NOTICE ("not available in this demo").
+ *   COURSES   scrollable course list from levels.js LEVELS; confirm returns
+ *             "PLAY" and sets selectedLevelIdx for RacerGame.loadLevel.
+ *   NOTICE    unavailable-mode message; back/confirm returns to GAMEMODES.
  *   CONTROLS  the old title screen's control listing
  *   OPTIONS   SFX + music sliders (same behavior as the pause menu),
  *             fullscreen toggle, key-bindings submenu
@@ -23,6 +23,7 @@ import { drawRect, drawText, rgba } from "../engine/renderer.js";
 import { SCREEN_W, SCREEN_H } from "../engine/luts.js";
 import { BTN_FLAGS } from "../engine/input.js";
 import { racerSound } from "./racersound.js";
+import { LEVELS, levelCount } from "./levels.js";
 import {
   drawBigText, measureBigText, drawBodyText, measureBodyText,
 } from "./hudfont.js";
@@ -98,6 +99,8 @@ export class MenuController {
     this.mode = "MAIN";
     this.row = 0;
     this.gamemodeRow = 0;
+    this.courseRow = 0;
+    this.selectedLevelIdx = 0; // set when COURSES confirms → PLAY
     this.noticeMode = null;
     this.optRow = 0;
     this.bindRow = 0;
@@ -112,7 +115,20 @@ export class MenuController {
     this._scrollHeld = 0;      // about auto-repeat
   }
 
-  reset() { this.mode = "MAIN"; this.row = 0; }
+  reset() {
+    this.mode = "MAIN";
+    this.row = 0;
+    this.gamemodeRow = 0;
+    this.courseRow = Math.max(0, Math.min(levelCount() - 1, this.selectedLevelIdx | 0));
+  }
+
+  /** Enter course select, optionally seeding the highlight from the last race. */
+  enterCourses(levelIdx) {
+    const n = levelCount();
+    const idx = levelIdx != null ? levelIdx | 0 : this.selectedLevelIdx | 0;
+    this.mode = "COURSES";
+    this.courseRow = Math.max(0, Math.min(Math.max(0, n - 1), idx));
+  }
 
   /** Enter the in-race pause menu. Pass the InputController so axis
    *  edge-detection starts clean (no phantom first move). */
@@ -170,6 +186,7 @@ export class MenuController {
     }
 
     if (this.mode === "GAMEMODES") return this._tickGameModes(e);
+    if (this.mode === "COURSES") return this._tickCourses(e);
     if (this.mode === "NOTICE") {
       if (e.back || e.confirm) this.mode = "GAMEMODES";
       return null;
@@ -215,9 +232,28 @@ export class MenuController {
     if (e.back) { this.mode = "MAIN"; return null; }
     if (e.confirm) {
       const item = GAMEMODE_ITEMS[this.gamemodeRow];
-      if (item === "TIME ATTACK") return "PLAY";
+      if (item === "TIME ATTACK") {
+        this.enterCourses(this.selectedLevelIdx);
+        return null;
+      }
       this.noticeMode = item;
       this.mode = "NOTICE";
+    }
+    return null;
+  }
+
+  _tickCourses(e) {
+    const n = levelCount();
+    if (n <= 0) { this.mode = "GAMEMODES"; return null; }
+    if (e.down) this.courseRow = (this.courseRow + 1) % n;
+    if (e.up)   this.courseRow = (this.courseRow + n - 1) % n;
+    // Left/right also scroll so a long list feels like a course picker.
+    if (e.right) this.courseRow = (this.courseRow + 1) % n;
+    if (e.left)  this.courseRow = (this.courseRow + n - 1) % n;
+    if (e.back) { this.mode = "GAMEMODES"; return null; }
+    if (e.confirm) {
+      this.selectedLevelIdx = this.courseRow;
+      return "PLAY";
     }
     return null;
   }
@@ -306,6 +342,7 @@ export class MenuController {
 
     if (this.mode === "MAIN") this._drawMain(rd, fonts, useSprite, frame);
     else if (this.mode === "GAMEMODES") this._drawGameModes(rd, fonts, useSprite);
+    else if (this.mode === "COURSES") this._drawCourses(rd, fonts, useSprite);
     else if (this.mode === "NOTICE") this._drawNotice(rd, fonts, useSprite);
     else if (this.mode === "CONTROLS") this._drawControls(rd, fonts, useSprite);
     else if (this.mode === "OPTIONS") this._drawOptions(rd, fonts, useSprite);
@@ -379,6 +416,53 @@ export class MenuController {
       y += 30;
     }
     this._hint(rd, fonts, useSprite, "W/S:SEL  ENTER/SPC:OK  ESC:BACK");
+  }
+
+  _drawCourses(rd, fonts, useSprite) {
+    this._header(rd, fonts, useSprite, "COURSE");
+    const n = levelCount();
+    if (n <= 0) {
+      this._bodyCentered(rd, fonts, useSprite, "NO COURSES", 110, 16, DIM);
+      this._hint(rd, fonts, useSprite, "ESC:BACK");
+      return;
+    }
+
+    // Windowed list so many maps still fit the 240px framebuffer.
+    const VISIBLE = 4;
+    const rowH = 22;
+    let start = Math.max(0, this.courseRow - ((VISIBLE / 2) | 0));
+    if (start + VISIBLE > n) start = Math.max(0, n - VISIBLE);
+    let y = 48;
+    for (let i = start; i < Math.min(n, start + VISIBLE); i++) {
+      const lev = LEVELS[i];
+      const name = (lev && lev.name) || lev.id || ("COURSE " + (i + 1));
+      const s = i === this.courseRow;
+      const w = useSprite ? measureBodyText(fonts, name, 18, 1) : name.length * 9;
+      const x = (SCREEN_W - w) >> 1;
+      if (s && (performance.now() / 400 | 0) & 1) drawText(rd, ">", x - 16, y + 2, SEL, 2);
+      this._body(rd, fonts, useSprite, name, x, y, 18, s ? SEL : WHITE);
+      y += rowH;
+    }
+
+    // Desc under the list (selected course).
+    const sel = LEVELS[this.courseRow];
+    const desc = (sel && sel.desc) || "";
+    if (desc) {
+      const lines = wrapText(desc.toUpperCase(), 36).slice(0, 3);
+      let dy = 48 + VISIBLE * rowH + 6;
+      for (const line of lines) {
+        this._bodyCentered(rd, fonts, useSprite, line, dy, 11, DIM);
+        dy += 13;
+      }
+    }
+
+    // Scroll chevrons when the window doesn't cover the full list.
+    if (start > 0) drawText(rd, "^", SCREEN_W - 14, 48, SEL, 2);
+    if (start + VISIBLE < n) drawText(rd, "v", SCREEN_W - 14, 48 + VISIBLE * rowH - 10, SEL, 2);
+
+    const idxLabel = (this.courseRow + 1) + "/" + n;
+    this._bodyCentered(rd, fonts, useSprite, idxLabel, SCREEN_H - 28, 10, DIM);
+    this._hint(rd, fonts, useSprite, "W/S:SEL  ENTER:RACE  ESC:BACK");
   }
 
   _drawNotice(rd, fonts, useSprite) {

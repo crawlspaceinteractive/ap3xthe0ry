@@ -4,10 +4,14 @@
  * A track is a closed Catmull-Rom loop sampled into evenly-ish spaced
  * samples. Each sample carries: center position, forward tangent (XZ),
  * perpendicular (XZ, "right" side), half-width, cumulative arc distance,
- * and flags (ramp / rampLip / gap).
+ * optional bank, and flags (ramp / rampLip / gap).
  *
  * Physics (vehicle.js) and rendering (trackrender.js) both consume the
  * same sample array, so the collision boundary is exactly the rendered road.
+ *
+ * Control points may be polar tuples [angleDeg, radius, y] (AHURA RING) or
+ * XYZ objects {x,y,z, bank?, hw?} from the spline editor. The AHURA west
+ * straight jump ramp is applied only when applyDefaultRamp is true.
  */
 
 // ---- Control points ---------------------------------------------------------
@@ -34,8 +38,7 @@ const HALF_WIDTH   = 7.0;   // road half-width (world units)
 const SAMPLE_SPACE = 3.2;   // target spacing between samples
 
 // Radial control points and road metrics can be overridden per level via
-// buildTrack({ cp, halfWidth, sampleSpace }). Without an override the
-// defaults below (the AHURA RING) are used, so existing callers are unchanged.
+// buildTrack({ cp, halfWidth, sampleSpace, applyDefaultRamp }).
 const DEFAULT_DEF = { cp: CP, halfWidth: HALF_WIDTH, sampleSpace: SAMPLE_SPACE };
 
 // Ramp/gap anchor: a point on the west straight (angle ≈ 190°, r ≈ 119)
@@ -43,8 +46,7 @@ const RAMP_ANCHOR_X = 119 * Math.cos((190 * Math.PI) / 180);
 const RAMP_ANCHOR_Z = 119 * Math.sin((190 * Math.PI) / 180);
 const RAMP_RISE_SAMPLES = 9;   // samples of upslope before the lip
 const RAMP_HEIGHT       = 2.6; // lip height above base road
-const RAMP_FALL_SAMPLES = 4;   // samples of steep drop-off after the lip (no gap —
-                               // the road falls away fast so the car still launches)
+const RAMP_FALL_SAMPLES = 4;   // samples of steep drop-off after the lip
 
 function catmullRom(p0, p1, p2, p3, t) {
   const t2 = t * t, t3 = t2 * t;
@@ -55,18 +57,49 @@ function catmullRom(p0, p1, p2, p3, t) {
   );
 }
 
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+/** Normalize a control-point list into {x,y,z,bank,hw} world points. */
+function normalizeControlPoints(cp, defaultHw) {
+  if (!cp || !cp.length) return [];
+  const first = cp[0];
+  // XYZ object form (spline editor / trackload)
+  if (first && typeof first === "object" && !Array.isArray(first) &&
+      ("x" in first || "z" in first)) {
+    return cp.map((p) => ({
+      x: +p.x || 0,
+      y: +p.y || 0,
+      z: +p.z || 0,
+      bank: +p.bank || 0,
+      hw: p.hw != null && p.hw > 0 ? +p.hw : defaultHw,
+    }));
+  }
+  // Polar [angleDeg, radius, y] form (AHURA RING)
+  return cp.map((row) => {
+    const a = row[0], r = row[1], y = row[2];
+    const rad = (a * Math.PI) / 180;
+    return {
+      x: r * Math.cos(rad),
+      y: y || 0,
+      z: r * Math.sin(rad),
+      bank: 0,
+      hw: defaultHw,
+    };
+  });
+}
+
 export function buildTrack(def) {
   const cfg = def || DEFAULT_DEF;
-  const cp = cfg.cp || CP;
   const halfWidth = cfg.halfWidth || HALF_WIDTH;
   const sampleSpace = cfg.sampleSpace || SAMPLE_SPACE;
-
-  // Control points → world coords
-  const pts = cp.map(([a, r, y]) => {
-    const rad = (a * Math.PI) / 180;
-    return { x: r * Math.cos(rad), y, z: r * Math.sin(rad) };
-  });
+  const applyDefaultRamp = !!cfg.applyDefaultRamp;
+  const pts = normalizeControlPoints(cfg.cp || CP, halfWidth);
   const n = pts.length;
+  if (n < 3) {
+    throw new Error("buildTrack: need at least 3 control points");
+  }
 
   // ---- Sample the closed loop ----------------------------------------------
   const samples = [];
@@ -83,7 +116,8 @@ export function buildTrack(def) {
         x: catmullRom(p0.x, p1.x, p2.x, p3.x, t),
         y: catmullRom(p0.y, p1.y, p2.y, p3.y, t),
         z: catmullRom(p0.z, p1.z, p2.z, p3.z, t),
-        hw: halfWidth,
+        hw: lerp(p1.hw, p2.hw, t),
+        bank: lerp(p1.bank, p2.bank, t),
         ramp: false, rampLip: false, gap: false,
       });
     }
@@ -115,28 +149,31 @@ export function buildTrack(def) {
     cur.segLen = Math.hypot(next.x - cur.x, next.z - cur.z) || 1;
   }
 
-  // ---- Ramp + gap on the west straight --------------------------------------
-  let lipIdx = 0, bd = Infinity;
-  for (let i = 0; i < count; i++) {
-    const dx = samples[i].x - RAMP_ANCHOR_X;
-    const dz = samples[i].z - RAMP_ANCHOR_Z;
-    const d = dx * dx + dz * dz;
-    if (d < bd) { bd = d; lipIdx = i; }
-  }
-  for (let k = 0; k <= RAMP_RISE_SAMPLES; k++) {
-    const i = (lipIdx - RAMP_RISE_SAMPLES + k + count) % count;
-    const t = k / RAMP_RISE_SAMPLES;               // 0..1 up the ramp
-    samples[i].y += RAMP_HEIGHT * t * t;           // ease-in rise
-    samples[i].ramp = true;
-  }
-  samples[lipIdx].rampLip = true;
-  // Steep drop-off after the lip back to base road level — continuous road,
-  // but it falls away faster than the car's flight arc, so jumps still happen.
-  for (let k = 1; k < RAMP_FALL_SAMPLES; k++) {
-    const i = (lipIdx + k) % count;
-    const t = k / RAMP_FALL_SAMPLES;               // 0..1 down the back side
-    samples[i].y += RAMP_HEIGHT * (1 - t) * (1 - t); // ease-out drop
-    samples[i].ramp = true;
+  // ---- Optional AHURA west-straight ramp (gated) ----------------------------
+  let lipIdx = 0;
+  if (applyDefaultRamp) {
+    let bd = Infinity;
+    for (let i = 0; i < count; i++) {
+      const dx = samples[i].x - RAMP_ANCHOR_X;
+      const dz = samples[i].z - RAMP_ANCHOR_Z;
+      const d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; lipIdx = i; }
+    }
+    for (let k = 0; k <= RAMP_RISE_SAMPLES; k++) {
+      const i = (lipIdx - RAMP_RISE_SAMPLES + k + count) % count;
+      const t = k / RAMP_RISE_SAMPLES;               // 0..1 up the ramp
+      samples[i].y += RAMP_HEIGHT * t * t;           // ease-in rise
+      samples[i].ramp = true;
+    }
+    samples[lipIdx].rampLip = true;
+    // Steep drop-off after the lip back to base road level — continuous road,
+    // but it falls away faster than the car's flight arc, so jumps still happen.
+    for (let k = 1; k < RAMP_FALL_SAMPLES; k++) {
+      const i = (lipIdx + k) % count;
+      const t = k / RAMP_FALL_SAMPLES;               // 0..1 down the back side
+      samples[i].y += RAMP_HEIGHT * (1 - t) * (1 - t); // ease-out drop
+      samples[i].ramp = true;
+    }
   }
 
   let minY = Infinity;
@@ -147,7 +184,7 @@ export function buildTrack(def) {
     count,
     totalLen: dist,
     minY,
-    lipIdx,
+    lipIdx: applyDefaultRamp ? lipIdx : 0,
     spawnIdx: 0,
   };
 }

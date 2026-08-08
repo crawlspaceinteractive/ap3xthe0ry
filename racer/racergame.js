@@ -16,7 +16,7 @@ import { InputController, BTN_FLAGS } from "../engine/input.js";
 import { loadTexture } from "../engine/textureloader.js";
 import { assetUrl } from "../engine/asseturls.js";
 import { loadGLBMeshIfAvailable } from "../engine/geometry.js";
-import { getLevelDef } from "./levels.js";
+import { getLevelDef, findLevelIndex, resolveLevelTrack, hydrateLevels } from "./levels.js";
 import { createVehicle, stepVehicle } from "./vehicle.js";
 import { createChaseCam, updateChaseCam, snapChaseCam } from "./chasecam.js";
 import { prepareVehicleMesh, buildVehicleTris, getHeadlightRig } from "./vehiclemesh.js";
@@ -30,6 +30,19 @@ import { createLapTimer, stepLapTimer, resetLapTimer } from "./laptimer.js";
 import { racerSound } from "./racersound.js";
 import { createSkyLayers } from "./sky.js";
 import { createScenery } from "./scenery.js";
+
+/** Authoring hook: ?level=hill-test or ?level=1 (resolved after manifest hydrate). */
+function levelIdxFromQuery() {
+  try {
+    const q = typeof location !== "undefined" ? new URLSearchParams(location.search).get("level") : null;
+    if (q == null || q === "") return 0;
+    if (/^\d+$/.test(q)) return Math.max(0, parseInt(q, 10) | 0);
+    const byId = findLevelIndex(q);
+    return byId >= 0 ? byId : 0;
+  } catch (_) {
+    return 0;
+  }
+}
 
 const STEP_MS = 1000 / 60;
 const MAX_FRAME_MS = 100;
@@ -78,7 +91,7 @@ export class RacerGame {
     this.menu = new MenuController();
     this._assetsReady = false;
     this.frame = 0;
-    this.levelIdx = 0;
+    this.levelIdx = 0;             // finalized after hydrateLevels in _load
     this.track = null;
     this.vehicle = null;
     this.cam = null;
@@ -98,6 +111,10 @@ export class RacerGame {
     this._loaded = false;
     this._titleAngle = 0;
     this._loadingT = 0;
+    this._loadGen = 0;         // stale-guard for overlapping async loadLevel
+    this._raceStartPending = false;
+    this._menuLoadPending = false;
+    this._previewIdx = -1;     // last course-select preview loaded
   }
 
   /** Begin asset loading ONLY (no render loop). The boot cinematic
@@ -132,6 +149,14 @@ export class RacerGame {
   }
 
   async _load() {
+    // Scan assets/3D/maps/manifest.json into LEVELS before resolving ?level=
+    // or loading the first course.
+    await hydrateLevels();
+    this.levelIdx = levelIdxFromQuery();
+    this.menu.selectedLevelIdx = this.levelIdx;
+    this.menu.courseRow = this.levelIdx;
+    this._previewIdx = this.levelIdx;
+
     const [road, grass, meshData, hudFonts, flare, ray, smoke] = await Promise.all([
       loadTexture(assetUrl("assets/2D/textures/base/rock.png"), { wrap: true }),
       loadTexture(assetUrl("assets/2D/textures/base/grass.png"), { wrap: true }),
@@ -152,35 +177,62 @@ export class RacerGame {
     // for the first level are placed once the pine texture is in.
     await this.scenery.load();
     this.sky.load();
+    await this.loadLevel(this.levelIdx);
+    // Mark ready only after the first level resolves so INTRO→MENU never
+    // renders with a null track (JSON courses are async).
     this._assetsReady = true;
-    this.loadLevel(this.levelIdx);
   }
 
   /** Build a level's runtime state (track, vehicle, chase cam, scenery).
-   *  Safe to call repeatedly — unloads + swaps. The menu backdrop re-orbits
-   *  whichever level is loaded last. */
-  loadLevel(idx) {
-    this.unloadLevel();
+   *  Resolves only through the levels.js list. Safe to call repeatedly —
+   *  unloads + swaps. Stale async resolves are ignored via _loadGen.
+   *  opts.preview: skip audio duck/fade (course-select backdrop swaps). */
+  async loadLevel(idx, opts) {
+    const preview = !!(opts && opts.preview);
+    const gen = ++this._loadGen;
+    this.unloadLevel({ quiet: preview });
     this.levelIdx = idx;
-    this.track = getLevelDef(idx).build();
+    const track = await resolveLevelTrack(getLevelDef(idx));
+    if (gen !== this._loadGen) return this;
+    this.track = track;
     this.vehicle = createVehicle(this.track);
     this.cam = createChaseCam(this.vehicle);
     if (this._assetsReady) this.scenery.place(this.track);
     snapChaseCam(this.cam, this.vehicle);
     resetLapTimer(this.lapTimer);
     this.place = 1;
+    this._previewIdx = idx;
     return this;
+  }
+
+  /** PLAY path: await list resolve, then enter RACE. */
+  async _beginRace() {
+    if (this._raceStartPending) return;
+    this._raceStartPending = true;
+    try {
+      await this.loadLevel(this.levelIdx);
+      if (!this._running) return;
+      this.state = "RACE";
+      racerSound.startRace();
+    } catch (err) {
+      console.error("[racer] race start failed", err);
+    } finally {
+      this._raceStartPending = false;
+    }
   }
 
   /** Tear down the current level's transient state so a fresh load (or a
    *  return to the menu) starts clean. Keeps shared assets (textures, vehicle
-   *  mesh, sounds, sky) in memory — they're engine-level, not level-level. */
-  unloadLevel() {
+   *  mesh, sounds, sky) in memory — they're engine-level, not level-level.
+   *  opts.quiet skips audio duck (used while scrubbing COURSES). */
+  unloadLevel(opts) {
     this.particles.length = 0;
     resetLapTimer(this.lapTimer);
     this.place = 1;
-    racerSound.duck();
-    racerSound.fadeOutMusic(900);
+    if (!(opts && opts.quiet)) {
+      racerSound.duck();
+      racerSound.fadeOutMusic(900);
+    }
   }
 
   // ---- Controls mapping --------------------------------------------------------
@@ -220,10 +272,22 @@ export class RacerGame {
       }
       if (this.intro.finished) { this.state = "MENU"; this.menu.reset(); }
     } else if (this.state === "MENU") {
-      if (this.menu.tick(this.input) === "PLAY") {
-        this.state = "RACE";
-        this.loadLevel(this.levelIdx);
-        racerSound.startRace();
+      const play = this.menu.tick(this.input) === "PLAY";
+      // Live course-select preview: swap the orbiting backdrop to the
+      // highlighted LEVELS entry (elevation / ribbon visible behind the UI).
+      if (this.menu.mode === "COURSES" &&
+          this.menu.courseRow !== this._previewIdx &&
+          !this._raceStartPending) {
+        const idx = this.menu.courseRow;
+        this._previewIdx = idx;
+        this.loadLevel(idx, { preview: true }).catch((err) => {
+          console.error("[racer] course preview failed", err);
+        });
+      }
+      if (play) {
+        const idx = this.menu.selectedLevelIdx | 0;
+        this.levelIdx = idx;
+        this._beginRace();
       }
     } else if (this.state === "RACE" &&
                (startPressed || this.input.keyJustPressed("Escape"))) {
@@ -241,6 +305,7 @@ export class RacerGame {
         // (see the LOADING branch in the step loop).
         this.unloadLevel();
         this._loadingT = 0;
+        this._menuLoadPending = false;
         this.state = "LOADING";
       }
     }
@@ -256,12 +321,23 @@ export class RacerGame {
       else if (this.state === "LOADING") {
         this._loadingT++;
         this._titleAngle += 0.15;
-        if (this._loadingT >= LOADING_T) {
-          // Bar is full — now do the actual teardown/rebuild that the loading
-          // screen was masking, then settle into the MENU state.
-          this.loadLevel(this.levelIdx);
-          this.state = "MENU";
-          this.menu.reset();
+        if (this._loadingT >= LOADING_T && !this._menuLoadPending) {
+          // Bar is full — rebuild the MENU backdrop from the levels list,
+          // then settle into MENU once the async resolve finishes.
+          this._menuLoadPending = true;
+          this.loadLevel(this.levelIdx).then(() => {
+            this._menuLoadPending = false;
+            if (!this._running) return;
+            this.menu.selectedLevelIdx = this.levelIdx;
+            this.state = "MENU";
+            this.menu.reset();
+          }).catch((err) => {
+            this._menuLoadPending = false;
+            console.error("[racer] menu level reload failed", err);
+            this.menu.selectedLevelIdx = this.levelIdx;
+            this.state = "MENU";
+            this.menu.reset();
+          });
         }
       }
     }
@@ -454,15 +530,28 @@ export class RacerGame {
 
     // Main menu orbits the track center; other states use the chase cam
     let cam = this.cam;
+    if (!this.track || !v || !cam) {
+      clearSky(rd, this._titleAngle + 180, this.frame);
+      this.sky.blit(rd, this._titleAngle + 180, 16);
+      present(rd, 0, 0);
+      return;
+    }
     if (this.state === "MENU") {
       const a = this._titleAngle;
+      const v = this.vehicle;
+      // COURSES uses an isometric-style orbit (steeper pitch, farther out)
+      // so elevation reads clearly — same idea as the spline editor iso view.
+      const iso = this.menu.mode === "COURSES";
+      const dist = iso ? 28 : 16;
+      const height = iso ? 18 : 6;
+      const pitch = iso ? 38 : 16;
       cam = {
-        x: v.x + sinDeg(a) * 16,
-        y: v.y + 6,
-        z: v.z + cosDeg(a) * 16,
+        x: v.x + sinDeg(a) * dist,
+        y: v.y + height,
+        z: v.z + cosDeg(a) * dist,
         yaw: a + 180,
-        pitch: 16,
-        fovMul: 1,
+        pitch,
+        fovMul: iso ? 0.92 : 1,
       };
     }
 

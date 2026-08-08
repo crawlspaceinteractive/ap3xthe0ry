@@ -10,11 +10,13 @@ retired Froyo platformer (still shipped, unloaded by the racer boot).
 | File | Role |
 |---|---|
 | racergame.js | Orchestrator: states INTRO > MENU > RACE <> PAUSE; fixed-step 60Hz sim, asset load, headlight FX, particles, render |
-| menus.js | MenuController — MAIN / CONTROLS / OPTIONS / BINDINGS / ABOUT and PAUSE (pause shares sliders/bindings/fullscreen; QUIT rebuilds the car+cam and returns to MENU) |
+| menus.js | MenuController — MAIN / GAMEMODES / COURSES / CONTROLS / OPTIONS / BINDINGS / ABOUT and PAUSE |
 | titleintro.js | Boot cinematic: warning card, AP3X swoop, THE0RY slide, PRESS START, loading bar |
 | vehicle.js | Arcade physics: accel/steer, drift + tier charge to boost, wall bounce, ramp lips, flips, TUNE tunables |
 | vehiclemesh.js | GLB car renderer: bakes mesh, full yaw/pitch/roll, headlight rig; procedural kart fallback |
+| levels.js | Level list / course catalog (LEVELS); every map registers here |
 | track.js | Closed Catmull-Rom spline + spatial queries (same samples for physics and render) |
+| trackload.js | Parse/fetch spline-editor JSON into buildTrack defs |
 | trackrender.js | Builds track triangles from the shared sample array |
 | chasecam.js | Third-person chase cam: yaw lag, speed distance, drift offset, look-ahead FOV, rear-view hold |
 | hudfont.js | Sprite numeral + smallfont glyphs, loadHudFonts, draw helpers |
@@ -39,12 +41,16 @@ retired Froyo platformer (still shipped, unloaded by the racer boot).
 | tunable.js | tunable() live-tweak registry |
 | state/camera/frustum/gamepad/profiler/touch/ps1fx/luts | Supporting engine helpers |
 
-## File Map — platform Froyo (game/) [legacy]
+## File Map — platform Froyo (game/) [legacy — keep]
 
 game.js, physics.js, world.js, islandatlas.js, camera.js (orbit),
 breath.js, portal.js, hud.js, enemyai.js, hazards.js, collectibles.js,
 flycam.js, hubworld.js, skypalette(s).js, textureatlas.js, tunables.js.
 These power the retired Froyo platformer and are NOT loaded by the racer.
+
+**Keep policy:** `game/` stays in the repo on purpose. Mine systems from
+it later, or port features back into the shared Crawlspace engine feature
+list. Do not delete as "unused."
 
 ## Boot flow (main.js to racer)
 
