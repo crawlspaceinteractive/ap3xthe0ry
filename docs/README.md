@@ -1,4 +1,5 @@
 # AP3X THE0RY (crawlspaceEngine racer)
+<img width="1280" height="582" alt="Screenshot 2026-08-09 at 03-27-39 ap3xthe0ry_demo iso" src="https://github.com/user-attachments/assets/e59b128c-3bb7-45f0-bfb9-ae2ae78e5a3f" />
 <img width="853" height="480" alt="Screenshot 2026-08-09 at 03-25-40 apex theory - YouTube" src="https://github.com/user-attachments/assets/2cb67464-bfb3-4977-a75c-ccda561ada3c" />
 A PS1-style software-rasterized arcade racer built on the shared Crawlspace
 engine. All rendering is CPU-side into a low-res framebuffer - no WebGL for
@@ -22,6 +23,8 @@ file's basename to the flat Supabase CDN bucket. Unknown names pass through
 unchanged, so same-origin files (e.g. `assets/3D/maps/test_track.json`) work
 locally. Missing GLB models fall back to procedural geometry and log a warning.
 
+<img width="1280" height="582" alt="Screenshot 2026-08-09 at 03-27-53 ap3xthe0ry_demo iso" src="https://github.com/user-attachments/assets/59d81891-7920-4872-aac1-e0473ed0c31b" />
+
 ## Boot flow
 
 `main.js` mounts a 640x480 canvas (internal 320x240 render upscaled 2x +
@@ -34,6 +37,8 @@ orange LOADING bar before the race begins.
 - T — reset car
 - START / B — pause
 - Gamepad: left stick steer/throttle, A gas, X drift, B brake, START pause
+
+<img width="1280" height="582" alt="Screenshot 2026-08-09 at 03-28-47 ap3xthe0ry_demo iso" src="https://github.com/user-attachments/assets/6aec9c66-d1e6-4607-87b9-52f3d1bcf54c" />
 
 ## Layout
 
@@ -50,6 +55,8 @@ orange LOADING bar before the race begins.
 - `tools/` — scene editor, spline-editor, level-format validator,
   hot-reload, mapgen-export, meshweld
 - `data/` — persistence
+
+<img width="1280" height="582" alt="Screenshot 2026-08-09 at 03-28-20 ap3xthe0ry_demo iso" src="https://github.com/user-attachments/assets/bb708f62-39c6-49ca-8028-950e16fc6243" />
 
 Debug: `?level=hill-test` or `?level=2` picks a course from LEVELS
 (also seeds the COURSES menu highlight). In-game: PLAY → TIME ATTACK →
@@ -68,3 +75,4 @@ The in-game ABOUT menu renders `docs/README.md` + `docs/CHANGELOG.md`
 in-game.
 
 <｜DSML｜parameter name="filePath" string="true">/home/crawlspacedev/Desktop/ap3xthe0rydemoiso-star/docs/README.md
+<img width="1280" height="582" alt="Screenshot 2026-08-09 at 03-27-31 ap3xthe0ry_demo iso" src="https://github.com/user-attachments/assets/a317b82d-1d38-45f8-97a9-d4b17ddd6a08" />
