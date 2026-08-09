@@ -5,7 +5,7 @@
  * matches the collision boundary. Everything returns engine tri objects
  * ({verts, color, avgZ, texture?}) for the shared sort+draw pass.
  */
-import { buildFace, buildTexturedFace, rgba, shadeFace } from "../engine/renderer.js";
+import { buildPoly, rgba, shadeFace } from "../engine/renderer.js";
 import { sinDeg, cosDeg } from "../engine/luts.js";
 
 const CULL_DIST      = 165;   // max sample distance from camera
@@ -25,8 +25,18 @@ const WALL_A      = rgba(125, 125, 138);
 const WALL_B      = rgba(105, 105, 118);
 const CAP_COLOR   = rgba(70, 55, 45);
 const GROUND_COL  = rgba(52, 108, 50);
+const BANK_GROUND = rgba(97, 77, 57);   // dirt under the bank/rumble band
 const CHECK_A     = rgba(240, 240, 240);
 const CHECK_B     = rgba(25, 25, 28);
+// Sloped edge bank — spline-editor parity: darker lip from BEVEL_IN×hw to the
+// track edge (hw), banked via edgePt (same as editor edgeCorner). The outer
+// edge is lifted BEVEL_LIFT along the deck normal so the bank is a real sloped
+// face — never coplanar with the road (a flat strip z-fought it). The rumble
+// strip sits between the bank and the wall. Every spline face here is emitted
+// as ONE quad unit (buildPoly) so the painter's pass sorts whole quads, not
+// half-split triangles (tri splitting let the road show through at speed).
+const BEVEL_IN   = 0.62;
+const BEVEL_LIFT = 0.2;
 
 export function buildTrackTris(track, tex, camera, frame) {
   const out = [];
@@ -57,7 +67,7 @@ export function buildTrackTris(track, tex, camera, frame) {
             { x: x1, y: gy, z: z1, u: x1 * U, v: z1 * U },
             { x: x0, y: gy, z: z1, u: x0 * U, v: z1 * U },
           ];
-          for (const t of buildTexturedFace(gpts, GRASS_TINT, tex.grass, camera)) {
+          for (const t of buildPoly(gpts, GRASS_TINT, tex.grass, camera)) {
             t.avgZ += 500; // force ground behind everything in the painter sort
             out.push(t);
           }
@@ -70,7 +80,7 @@ export function buildTrackTris(track, tex, camera, frame) {
         { x: camera.x + R, y: gy, z: camera.z + R },
         { x: camera.x - R, y: gy, z: camera.z + R },
       ];
-      for (const t of buildFace(gpts, GROUND_COL, camera)) {
+      for (const t of buildPoly(gpts, GROUND_COL, null, camera)) {
         t.avgZ += 500; // force ground behind everything in the painter sort
         out.push(t);
       }
@@ -89,10 +99,12 @@ export function buildTrackTris(track, tex, camera, frame) {
     // Behind-camera cull (with margin so the road under the car never pops)
     if (dx * camFx + dz * camFz < -BEHIND_MARGIN) continue;
 
-    const aL = edgePt(a, -1, a.hw);
-    const aR = edgePt(a,  1, a.hw);
-    const bL = edgePt(b, -1, b.hw);
-    const bR = edgePt(b,  1, b.hw);
+    // Road stops at the start of the bank (BEVEL_IN×hw); the outer band from
+    // there to the wall is bank + rumble with a ground plane underneath.
+    const aL = edgePt(a, -1, a.hw * BEVEL_IN);
+    const aR = edgePt(a,  1, a.hw * BEVEL_IN);
+    const bL = edgePt(b, -1, b.hw * BEVEL_IN);
+    const bR = edgePt(b,  1, b.hw * BEVEL_IN);
 
     // ---- Road surface --------------------------------------------------------
     if (!a.gap) {
@@ -104,9 +116,9 @@ export function buildTrackTris(track, tex, camera, frame) {
         { x: bL.x, y: bL.y, z: bL.z, u: 0,   v: vb },
       ];
       if (tex.road) {
-        for (const t of buildTexturedFace(pts, ROAD_TINT, tex.road, camera)) out.push(t);
+        for (const t of buildPoly(pts, ROAD_TINT, tex.road, camera)) out.push(t);
       } else {
-        for (const t of buildFace(pts, rgba(95, 95, 100), camera)) out.push(t);
+        for (const t of buildPoly(pts, rgba(95, 95, 100), null, camera)) out.push(t);
       }
 
       // Checkered start line across sample 0
@@ -114,44 +126,81 @@ export function buildTrackTris(track, tex, camera, frame) {
         const cells = 8;
         for (let cRow = 0; cRow < 2; cRow++) {
           for (let cCol = 0; cCol < cells; cCol++) {
-            const l0 = -a.hw + (2 * a.hw * cCol) / cells;
-            const l1 = -a.hw + (2 * a.hw * (cCol + 1)) / cells;
+            const l0 = -(a.hw * BEVEL_IN) + (2 * a.hw * BEVEL_IN * cCol) / cells;
+            const l1 = -(a.hw * BEVEL_IN) + (2 * a.hw * BEVEL_IN * (cCol + 1)) / cells;
             const f0 = 0.15 + cRow * 0.55, f1 = 0.15 + (cRow + 1) * 0.55;
             const col = ((cCol + cRow) & 1) ? CHECK_B : CHECK_A;
             const cpts = [
               lerpEdge(a, b, f0 / 2, l0), lerpEdge(a, b, f0 / 2, l1),
               lerpEdge(a, b, f1 / 2, l1), lerpEdge(a, b, f1 / 2, l0),
             ];
-            for (const t of buildFace(cpts, col, camera)) { t.avgZ -= 0.05; out.push(t); }
+            for (const t of buildPoly(cpts, col, null, camera)) { t.avgZ -= 0.05; out.push(t); }
           }
         }
       }
     }
 
-    // ---- Rumble strips + walls (only where road exists) -----------------------
+    // ---- Bank + rumble + walls (only where road exists) -----------------------
+    // The bank is the road's sloped edge lip from BEVEL_IN×hw to the track edge
+    // (hw), lifted BEVEL_LIFT along the deck normal. The rumble strip sits
+    // between the bank and the wall (hw..hw+RUMBLE_W), and the wall base is at
+    // the outer edge of the rumble. Everything is emitted as ONE quad per face
+    // (buildPoly) so the painter's pass sorts whole quads coherently instead of
+    // independently-sorted triangles (which let the road show through at speed).
     if (!a.gap && !b.gap) {
-      if (d2 < RUMBLE_DIST_SQ) {
-        const col = (i & 1) ? RUMBLE_RED : RUMBLE_WHT;
-        for (const side of [-1, 1]) {
-          const rpts = [
-            edgePt(a, side, a.hw),            edgePt(a, side, a.hw + RUMBLE_W),
-            edgePt(b, side, b.hw + RUMBLE_W), edgePt(b, side, b.hw),
-          ];
-          for (const t of buildFace(rpts, col, camera)) out.push(t);
-        }
-      }
-      // Walls: vertical quads at the rumble outer edge
+      const bevelCol = shadeFace(ROAD_TINT, 0.55);
       const wallCol = (i & 3) < 2 ? WALL_A : WALL_B;
       for (const side of [-1, 1]) {
+        const up0 = sampleUp(a), up1 = sampleUp(b);
+
+        // Ground plane under the bank (and the rumble): a dirt strip from the
+        // bank start to the wall base, dropped below the deck so the sloped
+        // bank never shows sky/void underneath from low or side angles.
+        const gn0 = edgePt(a, side, a.hw * BEVEL_IN);
+        const gn1 = edgePt(b, side, b.hw * BEVEL_IN);
+        const gx0 = edgePt(a, side, a.hw + RUMBLE_W);
+        const gx1 = edgePt(b, side, b.hw + RUMBLE_W);
+        const gdrop = 0.15; // matches the grass apron's inner edge drop
+        const gpts = [
+          { x: gn0.x, y: gn0.y - gdrop, z: gn0.z },
+          { x: gx0.x, y: gx0.y - gdrop, z: gx0.z },
+          { x: gx1.x, y: gx1.y - gdrop, z: gx1.z },
+          { x: gn1.x, y: gn1.y - gdrop, z: gn1.z },
+        ];
+        for (const t of buildPoly(gpts, BANK_GROUND, null, camera)) out.push(t);
+
+        // Sloped bank: deck at BEVEL_IN×hw, rising BEVEL_LIFT at the track edge.
+        const bi0 = edgePt(a, side, a.hw * BEVEL_IN);
+        const bi1 = edgePt(b, side, b.hw * BEVEL_IN);
+        const bo0 = edgePt(a, side, a.hw);
+        const bo1 = edgePt(b, side, b.hw);
+        bo0.x += up0.x * BEVEL_LIFT; bo0.y += up0.y * BEVEL_LIFT; bo0.z += up0.z * BEVEL_LIFT;
+        bo1.x += up1.x * BEVEL_LIFT; bo1.y += up1.y * BEVEL_LIFT; bo1.z += up1.z * BEVEL_LIFT;
+        for (const t of buildPoly([bi0, bo0, bo1, bi1], bevelCol, null, camera)) out.push(t);
+
+        // Rumble strip between the bank and the wall (deck height).
+        if (d2 < RUMBLE_DIST_SQ) {
+          const rcol = (i & 1) ? RUMBLE_RED : RUMBLE_WHT;
+          const rpts = [
+            edgePt(a, side, a.hw),
+            edgePt(a, side, a.hw + RUMBLE_W),
+            edgePt(b, side, b.hw + RUMBLE_W),
+            edgePt(b, side, b.hw),
+          ];
+          for (const t of buildPoly(rpts, rcol, null, camera)) out.push(t);
+        }
+
+        // Wall: base at the outer edge of the rumble, top +WALL_H along the
+        // banked surface normal so it hugs the cambered deck (world +Y on flat).
         const w0 = edgePt(a, side, a.hw + RUMBLE_W);
         const w1 = edgePt(b, side, b.hw + RUMBLE_W);
         const wpts = [
           { x: w0.x, y: w0.y, z: w0.z },
           { x: w1.x, y: w1.y, z: w1.z },
-          { x: w1.x, y: w1.y + WALL_H, z: w1.z },
-          { x: w0.x, y: w0.y + WALL_H, z: w0.z },
+          { x: w1.x + up1.x * WALL_H, y: w1.y + up1.y * WALL_H, z: w1.z + up1.z * WALL_H },
+          { x: w0.x + up0.x * WALL_H, y: w0.y + up0.y * WALL_H, z: w0.z + up0.z * WALL_H },
         ];
-        for (const t of buildFace(wpts, side > 0 ? wallCol : shadeFace(wallCol, 0.8), camera)) out.push(t);
+        for (const t of buildPoly(wpts, side > 0 ? wallCol : shadeFace(wallCol, 0.8), null, camera)) out.push(t);
       }
     }
 
@@ -169,7 +218,7 @@ export function buildTrackTris(track, tex, camera, frame) {
           { x: g2.x, y: g2.y - 0.35, z: g2.z, u: g2.x * U, v: g2.z * U },
           { x: g3.x, y: g3.y - 0.15, z: g3.z, u: g3.x * U, v: g3.z * U },
         ];
-        for (const t of buildTexturedFace(gpts, GRASS_TINT, tex.grass, camera)) {
+        for (const t of buildPoly(gpts, GRASS_TINT, tex.grass, camera)) {
           t.avgZ += 0.15; // grass sorts behind the road/rumble at shared edges
           out.push(t);
         }
@@ -187,7 +236,7 @@ export function buildTrackTris(track, tex, camera, frame) {
         { x: cR.x, y: cR.y - 2.6, z: cR.z },
         { x: cL.x, y: cL.y - 2.6, z: cL.z },
       ];
-      for (const t of buildFace(cpts, CAP_COLOR, camera)) out.push(t);
+      for (const t of buildPoly(cpts, CAP_COLOR, null, camera)) out.push(t);
     };
     if (a.gap && !prev.gap) capAt(a);        // takeoff face
     if (!a.gap && prev.gap) capAt(a);        // landing face
@@ -197,7 +246,7 @@ export function buildTrackTris(track, tex, camera, frame) {
 }
 
 /** Banked lateral edge — matches spline-editor ribbonCorners / edgeCorner. */
-function edgePt(sample, side, lat) {
+export function edgePt(sample, side, lat) {
   const b = (sample.bank || 0) * Math.PI / 180;
   const cb = Math.cos(b), sb = Math.sin(b);
   return {
@@ -205,6 +254,17 @@ function edgePt(sample, side, lat) {
     y: sample.y + sb * side * lat,
     z: sample.z + sample.pz * cb * side * lat,
   };
+}
+
+/**
+ * Unit vector perpendicular to the banked deck at a sample ("up"). With
+ * forward f=(fx,0,fz) and banked lateral l=(px·cb, sb, pz·cb), the outward
+ * surface normal is f×l → (fz·sb, cb, −fx·sb). Bank=0 gives (0,1,0).
+ */
+export function sampleUp(sample) {
+  const b = (sample.bank || 0) * Math.PI / 180;
+  const cb = Math.cos(b), sb = Math.sin(b);
+  return { x: sample.fz * sb, y: cb, z: -sample.fx * sb };
 }
 
 // Point at fractional distance f along segment a→b, lateral offset l (bank-aware)

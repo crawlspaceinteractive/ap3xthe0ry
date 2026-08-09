@@ -704,6 +704,36 @@ export function buildTexturedFace(worldPts, color, texture, camera) {
   return tris;
 }
 
+// ---- Build a convex polygon (e.g. a spline quad) as ONE sortable unit ------
+// The whole quad keeps a single avgZ (centroid depth) and its projected
+// vertices intact, so the painter's pass sorts whole spline quads coherently
+// instead of splitting each quad into independently-sorted triangles (which
+// let the road show through the bank/wall at high speed). The draw pass fans
+// the polygon into triangles at raster time (handles near-plane clips that
+// turn a quad into a 5-point polygon). texture: if provided, each worldPts[i]
+// must also carry {u, v} (see buildTexturedFace).
+export function buildPoly(worldPts, color, texture, camera) {
+  const texd = !!texture;
+  const csPts = worldPts.map(p => {
+    const cs = toCameraSpace(p, camera);
+    if (texd) { cs.u = p.u; cs.v = p.v; }
+    return cs;
+  });
+  const clipped = texd ? clipNearUV(csPts) : clipNear(csPts);
+  if (clipped.length < 3) return [];
+  const verts = clipped.map(c => {
+    const v = projectCS(c, camera);
+    if (texd) { v.u = c.u; v.v = c.v; }
+    return v;
+  });
+  let az = 0;
+  for (const v of verts) az += v.cz;
+  az /= verts.length;
+  const unit = { verts, color, avgZ: az };
+  if (texd) unit.texture = texture;
+  return [unit];
+}
+
 // Oriented horizontal flatsprite quad. Double-sided (no backface cull — the
 // rasterizer accepts either winding) so jump-through bridges stay visible
 // from below; the underside is shaded darker so it reads as shadowed.

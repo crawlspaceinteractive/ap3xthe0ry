@@ -322,3 +322,85 @@ Purpose: full history of changes & fixes so regressions can be traced.
   (`loadLevel(idx,{preview:true})`, quiet audio) and uses an iso-style
   orbit cam (pitch 38°, farther/higher) so hills read clearly.
 - Files: levels.js, racergame.js, trackrender.js, manifest.json, docs.
+
+## [Session: Ribbon Parity — banked ground + edge bevel + bank-aware walls]
+- GOAL: the racer's road ribbon (and ground query) now matches the spline
+  editor's banked geometry 1:1 — visuals and collision agree on camber.
+- `racer/track.js` `queryTrack`: `groundY` is now `cy + lerp(sin(bankA),
+  sin(bankB), t) * lat` — lerping the SINES (not sin of the lerped angle) so
+  the query rides the editor's bilinear deck exactly; the vehicle now sits on
+  the camber instead of the flat centerline. Returned object gains `bank`
+  (degrees, lerped). Callers (vehicle.js, chasecam.js, laptimer.js) unchanged —
+  they already consumed `q.groundY`.
+- `racer/trackrender.js`:
+  - `edgePt` exported; new `sampleUp(sample)` returns the deck up-normal
+    `(fz·sb, cb, −fx·sb)` (bank 0 → (0,1,0)).
+  - Walls: tops now lift along `sampleUp · WALL_H` (banked surface normal)
+    instead of world +Y, so walls hug a cambered deck (flat tracks identical).
+  - New inner edge bevel: darker strip per side between 0.62×hw and 0.9×hw
+    (editor `edgeCorner` f range), `shadeFace(ROAD_TINT, 0.55)`, `avgZ −= 0.04`
+    (sits above the road, below the start checkers), gated by the same
+    `!gap && d2 < RUMBLE_DIST_SQ` as the rumble.
+- NEW `tools/ribbon-smoke.js` (`node tools/ribbon-smoke.js`, exits non-zero on
+  fail): asserts edgePt ≡ editor edgeCorner (f ∈ {0.62, 0.9, 1.0}, both sides),
+  sampleUp orthogonality/up.y == cos(bank), queryTrack groundY at lat=±hw/0
+  equals editor corner heights, mid-segment/straight-segment queries equal the
+  bilinear deck reconstructed from the four rendered corner heights, and a
+  flat-track regression (bank 0 → groundY == y, edgePt.y == s.y, up=(0,1,0)).
+- Files: `racer/track.js`, `racer/trackrender.js`, `tools/ribbon-smoke.js`.
+  `node --check` passed on all; smoke test passes. PLAYTEST note: verify
+  `?level=hill-test` (regression); to SEE bank, temporarily bank an AHURA CP
+  or drop a banked export (both shipped maps are bank 0).
+- PLAYTEST map: NEW `assets/3D/maps/bank_test.track.json` (spline-editor export,
+  bank 14°–18°, hw 12.5) registered in `assets/3D/maps/manifest.json` as
+  "BANK TEST" — selectable in COURSES (or `?level=bank-test`) to see the car
+  sit on the camber and walls follow the deck. Stale `latest.md` and
+  `docs/checkpoint.md` removed.
+
+- FIX (ribbon parity, unreleased): the edge bevel was a flat strip coplanar
+  with the road (only `avgZ −= 0.04` separating it) → z-fighting on banked
+  sections. Now the bevel is a real sloped lip: inner edge at deck height
+  (0.62×hw), outer edge lifted `BEVEL_LIFT = 0.2` along the deck normal
+  (`sampleUp`) at 0.9×hw, so it reads as a curb/chamfer and is never coplanar.
+  `BEVEL_BIAS` removed; `BEVEL_LIFT` added. `node --check` and
+  `tools/ribbon-smoke.js` pass.
+
+- FIX (ribbon parity, unreleased): removed the rumble strips and the flat road
+  sliver between bank and wall. The bank (sloped edge lip) now runs from
+  `BEVEL_IN×hw` all the way to the track edge (`hw`) with `BEVEL_LIFT` at its
+  outer edge, and the wall starts exactly at the end of the bank (base = the
+  bank's raised outer edge, top +WALL_H along the deck normal). This stops
+  high-speed tri culling from showing the road deck underneath and removes the
+  road-texture sliver visible between the old bank end and the wall. Rumble
+  quads + `RUMBLE_*` constants removed; grass apron base moved from
+  `hw+RUMBLE_W` to `hw`. `node --check`, `tools/ribbon-smoke.js`, and a
+  buildTrackTris pass on all three maps pass.
+
+- FIX/CHANGE (ribbon parity, unreleased): spline meshes are now rendered as
+  whole QUAD units instead of per-triangle splits. New `buildPoly()` in
+  `engine/renderer.js` clips + projects a quad and returns a single sortable
+  unit `{ verts: [n], color, avgZ, texture? }` (one centroid avgZ; a
+  near-plane-clipped quad may become a 5- or 3-point polygon). The draw loop
+  in `racer/racergame.js` fans each unit into triangles at raster time. The
+  painter's pass now sorts whole spline quads coherently, so the road no longer
+  shows through the bank/wall at high speed (per-triangle avgZ made the two
+  halves of a quad sort independently and leak the deck under the edge).
+  `buildTrackTris` emits quads for road, checkers, bank, rumble, wall, grass,
+  ground, and gap caps. `buildFace`/`buildTexturedFace` are unchanged for other
+  geometry (scenery, cubes, vehicles).
+- FIX/CHANGE (ribbon parity, unreleased): rumble strips are back — one quad per
+  side between the bank and the wall (bank ends at the track edge `hw`, rumble
+  sits `hw..hw+RUMBLE_W`, wall base at `hw+RUMBLE_W`, grass apron resumes
+  there). Rumble quads are emitted as single units and gated by
+  `d2 < RUMBLE_DIST_SQ` as before. `node --check` + `tools/ribbon-smoke.js`
+  pass; buildTrackTris emits all-quad units on all three maps.
+
+- CHANGE (ribbon parity, unreleased): the road now stops at the start of the
+  bank — the road deck spans only ±(BEVEL_IN×hw) instead of ±hw, so the road
+  never runs under the bank; the start-line checkers follow the narrower road.
+  The bank + rumble band (BEVEL_IN×hw .. hw+RUMBLE_W) gets a dirt ground plane
+  underneath, dropped 0.15 below deck (matching the grass apron inner edge) so
+  the sloped bank never shows sky/void from low or side angles. Physics is
+  untouched (queryTrack still uses full hw), so the car can still ride the
+  bank. `node --check`, `tools/ribbon-smoke.js`, and quad-build checks on all
+  three maps at multiple yaws pass.

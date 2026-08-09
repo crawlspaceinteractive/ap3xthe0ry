@@ -589,8 +589,11 @@ export class RacerGame {
       }
       tris.sort((a, b) => b.avgZ - a.avgZ);
       for (const t of tris) {
-        if (t.texture) drawTexturedTriangle(rd, t.verts[0], t.verts[1], t.verts[2], t.color, t.texture);
-        else drawTriangle(rd, t.verts[0], t.verts[1], t.verts[2], t.color);
+        const fn = t.texture ? drawTexturedTriangle : drawTriangle;
+        const v0 = t.verts[0];
+        for (let i = 1; i + 1 < t.verts.length; i++) {
+          fn(rd, v0, t.verts[i], t.verts[i + 1], t.color, t.texture);
+        }
       }
       // Headlight light-ray billboards: camera-facing sprites (alpha blended
       // from the sprite) drawn after the scene + car so the beam is visible
