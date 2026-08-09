@@ -21,6 +21,7 @@ import { createVehicle, stepVehicle } from "./vehicle.js";
 import { createChaseCam, updateChaseCam, snapChaseCam } from "./chasecam.js";
 import { prepareVehicleMesh, buildVehicleTris, getHeadlightRig } from "./vehiclemesh.js";
 import { buildTrackTris } from "./trackrender.js";
+import { createTireStacks, stepTireStacks, buildTireStackTris } from "./tirestacks.js";
 import { drawGlobePlaceholder, drawGlobeCrosshair } from "./trackglobe.js";
 import { drawRacerHUD } from "./racerhud.js";
 import { TitleIntro } from "./titleintro.js";
@@ -53,6 +54,9 @@ const MAX_FRAME_MS = 100;
 // fills at the same pace as the boot intro's LOAD phase (LOAD_T) so the two
 // are visually identical, then drops into MENU.
 const LOADING_T = 180;
+// Quick globe-backed loading screen on the way INTO a course (menu → RACE) —
+// a short beat so the track resolves behind the map-select globe.
+const RACE_LOADING_T = 90;
 
 // Flat backdrop behind the MAIN/GAMEMODES/COURSES/etc. menu screens — the 3D
 // orbiting track scene used to render back there; now it's just this.
@@ -61,6 +65,7 @@ const MENU_BG = rgba(9, 8, 15);
 const SMOKE_COLORS = [rgba(200, 200, 205), rgba(80, 165, 255), rgba(255, 150, 50), rgba(200, 90, 255)];
 const BOOST_COLORS = [rgba(255, 200, 80), rgba(255, 120, 40), rgba(255, 240, 180)];
 const FLARE_TINT = rgba(255, 250, 235);
+const DUST_COLORS = [rgba(150, 130, 95), rgba(118, 98, 68)];  // off-road dirt kick-up
 
 // Headlight FX anchors are pulled ~HL_INSET screen px toward the screen center
 // (perspective-corrected at the light's depth). The nudge moves along the
@@ -105,6 +110,7 @@ export class RacerGame {
     this.track = null;
     this.vehicle = null;
     this.cam = null;
+    this.tireStacks = null;    // destructible tire-stack barriers (open walls)
     this.tex = { road: null, grass: null };
     this.fx = null;           // FX billboard sprites (flare / lightray / smoke)
     this.mesh = null;          // prepared vehicle mesh
@@ -215,6 +221,7 @@ export class RacerGame {
     this.track = track;
     this.vehicle = createVehicle(this.track);
     this.cam = createChaseCam(this.vehicle);
+    this.tireStacks = createTireStacks(this.track);
     if (this._assetsReady) this.scenery.place(this.track);
     snapChaseCam(this.cam, this.vehicle);
     resetLapTimer(this.lapTimer);
@@ -234,6 +241,11 @@ export class RacerGame {
       racerSound.startRace();
     } catch (err) {
       console.error("[racer] race start failed", err);
+      if (this._running) {
+        this.state = "MENU";
+        this.menu.reset();
+        racerSound.playMenuMusic();
+      }
     } finally {
       this._raceStartPending = false;
     }
@@ -245,6 +257,7 @@ export class RacerGame {
    *  opts.quiet skips audio duck (used while scrubbing COURSES). */
   unloadLevel(opts) {
     this.particles.length = 0;
+    this.tireStacks = null;
     resetLapTimer(this.lapTimer);
     this.place = 1;
     if (!(opts && opts.quiet)) {
@@ -288,7 +301,11 @@ export class RacerGame {
       if (startPressed || aPressed) {
         if (this.intro.pressStart() === "start") racerSound.rev();
       }
-      if (this.intro.finished) { this.state = "MENU"; this.menu.reset(); }
+      if (this.intro.finished) {
+        this.state = "MENU";
+        this.menu.reset();
+        racerSound.playMenuMusic();
+      }
     } else if (this.state === "MENU") {
       const play = this.menu.tick(this.input) === "PLAY";
       // Live course-select preload: as the player scrubs through LEVELS in
@@ -307,7 +324,12 @@ export class RacerGame {
       if (play) {
         const idx = this.menu.selectedLevelIdx | 0;
         this.levelIdx = idx;
-        this._beginRace();
+        // Course selected: fade the menu theme out, then run the quick
+        // globe-backed loading screen before dropping into RACE.
+        racerSound.fadeOutMusic(450);
+        this._loadingT = 0;
+        this._loadingTo = "RACE";
+        this.state = "LOADING";
       }
     } else if (this.state === "RACE" &&
                (startPressed || this.input.keyJustPressed("Escape"))) {
@@ -326,6 +348,7 @@ export class RacerGame {
         this.unloadLevel();
         this._loadingT = 0;
         this._menuLoadPending = false;
+        this._loadingTo = "MENU";
         this.state = "LOADING";
       }
     }
@@ -341,7 +364,13 @@ export class RacerGame {
       else if (this.state === "LOADING") {
         this._loadingT++;
         this._titleAngle += 0.15;
-        if (this._loadingT >= LOADING_T && !this._menuLoadPending) {
+        if (this._loadingTo === "RACE") {
+          // Entering a course: once the quick bar fills, resolve the level and
+          // drop into RACE (startRace hands the music back to the shuffle).
+          if (this._loadingT >= RACE_LOADING_T && !this._raceStartPending) {
+            this._beginRace();
+          }
+        } else if (this._loadingT >= LOADING_T && !this._menuLoadPending) {
           // Bar is full — preload the selected level (track/vehicle/cam) so
           // it's ready to go, then settle into MENU once that resolves.
           this._menuLoadPending = true;
@@ -351,12 +380,14 @@ export class RacerGame {
             this.menu.selectedLevelIdx = this.levelIdx;
             this.state = "MENU";
             this.menu.reset();
+            racerSound.playMenuMusic();
           }).catch((err) => {
             this._menuLoadPending = false;
             console.error("[racer] menu level reload failed", err);
             this.menu.selectedLevelIdx = this.levelIdx;
             this.state = "MENU";
             this.menu.reset();
+            racerSound.playMenuMusic();
           });
         }
       }
@@ -370,6 +401,7 @@ export class RacerGame {
     const wasRespawning = v.respawnT > 0;
     const controls = this._readControls();
     stepVehicle(v, controls, this.track);
+    stepTireStacks(this.tireStacks, v);
     v.odometer += Math.abs(v.speedF);
     racerSound.update(v, controls);
     if (wasRespawning && v.respawnT === 0) {
@@ -426,6 +458,23 @@ export class RacerGame {
           x: v.x, y: v.y + 0.1, z: v.z,
           vx: Math.cos(a) * 0.12, vy: 0.03, vz: Math.sin(a) * 0.12,
           life: 14, maxLife: 14, color: rgba(190, 180, 165), size: 1,
+          sprite: smoke,
+        });
+      }
+    }
+    // Off-road dirt kick-up behind the rear wheels (muddy, small)
+    if (v.offroad && v.grounded && this.frame % 2 === 0) {
+      const life = 16 + (Math.random() * 8) | 0;
+      for (const side of [-1, 1]) {
+        this.particles.push({
+          x: v.x - fx * 0.9 + px * side * 0.6,
+          y: v.y + 0.1,
+          z: v.z - fz * 0.9 + pz * side * 0.6,
+          vx: -v.vx * 0.12 + (Math.random() - 0.5) * 0.05,
+          vy: 0.02 + Math.random() * 0.03,
+          vz: -v.vz * 0.12 + (Math.random() - 0.5) * 0.05,
+          life, maxLife: life,
+          color: DUST_COLORS[(Math.random() * 2) | 0], size: 1,
           sprite: smoke,
         });
       }
@@ -526,6 +575,16 @@ export class RacerGame {
     // behind the intro-style loading bar. Rendered here with no 3D geometry —
     // the bar fill mirrors the boot intro's LOAD phase.
     if (this.state === "LOADING") {
+      // Entering a course from the menu: the map-select globe is the loading
+      // background (same look as COURSES), with the quick loading bar on top.
+      if (this._loadingTo === "RACE") {
+        drawRect(rd, 0, 0, SCREEN_W, SCREEN_H, MENU_BG, true);
+        drawGlobePlaceholder(rd, 0, 0, SCREEN_W, SCREEN_H);
+        drawGlobeCrosshair(rd, 0, 0, SCREEN_W, SCREEN_H, this.frame);
+        drawLoadingBar(rd, this.hudFonts, Math.min(1, this._loadingT / RACE_LOADING_T));
+        present(rd, 0, 0);
+        return;
+      }
       let a = this._titleAngle;
       let cam2 = this.cam;
       if (this.vehicle) {
@@ -580,6 +639,7 @@ export class RacerGame {
     {
       const tris = buildTrackTris(this.track, this.tex, cam, this.frame);
       this.scenery.build(cam, this.frame, tris);
+      buildTireStackTris(this.tireStacks, cam, tris);
       // Hide/blink the car while respawning
       if (this.mesh && (v.respawnT === 0 || (v.respawnT & 4))) {
         const carTris = buildVehicleTris(

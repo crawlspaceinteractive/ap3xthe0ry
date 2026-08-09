@@ -13,7 +13,7 @@
  * All units are per-frame at a fixed 60Hz step (matches engine convention).
  */
 import { sinDeg, cosDeg } from "../engine/luts.js";
-import { queryTrack } from "./track.js";
+import { queryTrack, groundHeightAt, RUMBLE_W } from "./track.js";
 import { tunable } from "../engine/tunable.js";
 
 // ---- Tuning (single source of truth for game feel) --------------------------
@@ -62,7 +62,11 @@ export const TUNE = tunable("vehicle", {
   gravity:       0.012,
   maxFall:       2.5,
   rampLipBoost:  0.6,    // extra vy at a flagged ramp lip
-  launchDropGate: 1,     // ground dropping faster than this/frame → airborne
+  launchDropGate: 3,     // ground dropping faster than this/frame → airborne
+  groundFollow:   0.75,  // grounded descent ease — smoother downhill/ramp steps
+  groundFollowUp: 0.95,  // grounded climb ease — tracks rising ground tightly
+  pitchTgtSmooth: 0.4,   // EMA on the slope-pitch target — kills teeter-totter
+  pitchFollow:    0.25,  // car pitch lerp toward the smoothed slope target
   landHardVy:    -0.05,
   landHardLoss:  0.7,    // speed retention on a hard landing
   airPitchRate:  1,      // deg/frame in-air pitch control
@@ -75,6 +79,14 @@ export const TUNE = tunable("vehicle", {
   wallSpeedLoss: 0,      // scaled by impact normal speed
   wallStickyDrag: -0.005, // shallow-angle high-speed anti-wall-riding drag
   wallTopHeight: 0.5,    // walls only block below this height above road
+
+  // Off-road (grass/dirt beyond the walls) — driving off-course is possible
+  // but severely punished. WALL_SOLID "random" stretches leave gaps in the
+  // walls (see track.js); beyond them the car rides track.offroadY.
+  offroadTopMul: 0.3,    // top speed fraction while off-road
+  offroadDrag:   0.97,   // per-frame speed retention off-road
+  offroadGrip:   1.4,    // lateral-retention multiplier off-road (looser)
+  roadSnapHeight: 2,     // only ride the deck if within this vertical band
 
   // Respawn
   fallKillDepth: 26,     // below road level → respawn
@@ -111,7 +123,11 @@ export const TUNE = tunable("vehicle", {
   gravity:        S(0.01, 0.12, 0.001),
   maxFall:        S(0.3, 2.5, 0.05),
   rampLipBoost:   S(0.0, 0.6, 0.01),
-  launchDropGate: S(0.05, 1.0, 0.01),
+  launchDropGate: S(0.1, 6.0, 0.05),
+  groundFollow:   S(0.1, 1.0, 0.01),
+  groundFollowUp: S(0.1, 1.0, 0.01),
+  pitchTgtSmooth: S(0.05, 1.0, 0.01),
+  pitchFollow:    S(0.05, 0.8, 0.01),
   landHardVy:     S(-1.0, -0.05, 0.01),
   landHardLoss:   S(0.7, 1.0, 0.005),
   airPitchRate:   S(1.0, 8.0, 0.1),
@@ -122,6 +138,10 @@ export const TUNE = tunable("vehicle", {
   wallSpeedLoss:  S(0.0, 1.5, 0.05),
   wallStickyDrag: S(-0.05, 1.0, 0.001),
   wallTopHeight:  S(0.5, 6.0, 0.1),
+  offroadTopMul:  S(0.1, 1.0, 0.01),
+  offroadDrag:    S(0.90, 1.0, 0.001),
+  offroadGrip:    S(0.5, 2.0, 0.05),
+  roadSnapHeight: S(0.5, 12.0, 0.1),
   fallKillDepth:  S(5, 80, 1),
   respawnFrames:  S(10, 180, 5),
 }, { label: "Vehicle Physics" });
@@ -157,6 +177,7 @@ export function createVehicle(track) {
     roll: 0,                // visual lean (deg)
     flipAccum: 0,
     flips: 0,
+    _pitchTgt: 0,           // smoothed slope-pitch target (teeter-totter guard)
     // track
     trackIdx: track.spawnIdx,
     lastSafeIdx: track.spawnIdx,
@@ -166,6 +187,7 @@ export function createVehicle(track) {
     landT: 0,
     respawnT: 0,
     justBoosted: 0,
+    offroad: false,     // riding the off-road plain (speed penalty active)
     // mileage ticker (world units accumulated, ≈ meters)
     odometer: 0,
   };
@@ -238,7 +260,8 @@ export function stepVehicle(v, controls, track) {
 
   // ---- 1.1 Longitudinal forces ----------------------------------------------
   const boosting = v.boostT > 0;
-  const effTop = TUNE.topSpeed * (boosting ? TUNE.boostTopMul : 1);
+  const offroad = v.grounded && v.offroad;
+  const effTop = TUNE.topSpeed * (boosting ? TUNE.boostTopMul : 1) * (offroad ? TUNE.offroadTopMul : 1);
   if (v.grounded) {
     if (boosting) {
       speedF += TUNE.boostAccel * (1 - speedF / effTop);
@@ -252,6 +275,7 @@ export function stepVehicle(v, controls, track) {
     }
     if (v.drifting) speedF *= TUNE.driftFwdDrag;
     else if (controls.handbrake) speedF *= TUNE.handbrakeDrag;
+    if (offroad) speedF *= TUNE.offroadDrag;   // grass bleeds speed hard
   } else {
     speedF *= TUNE.airDrag;
     if (boosting) speedF += TUNE.boostAccel * 0.4 * (1 - speedF / effTop);
@@ -263,7 +287,8 @@ export function stepVehicle(v, controls, track) {
   const grip = !v.grounded ? TUNE.gripLatAir
              : v.drifting  ? TUNE.gripLatDrift
              : TUNE.gripLat;
-  latV *= grip;
+  const effGrip = (v.grounded && v.offroad) ? grip * TUNE.offroadGrip : grip;
+  latV *= effGrip;
 
   // Recompose velocity in (possibly rotated) heading frame
   const nfx = sinDeg(v.yaw), nfz = cosDeg(v.yaw);
@@ -273,7 +298,7 @@ export function stepVehicle(v, controls, track) {
 
   // Drift angle (velocity vs heading) + charge
   v.driftAngle = (Math.atan2(latV, Math.max(0.05, Math.abs(speedF))) * 180) / Math.PI;
-  if (v.drifting && v.grounded) {
+  if (v.drifting && v.grounded && !v.offroad) {   // no drift charge on grass
     const a = Math.abs(v.driftAngle);
     if (a > 6) v.charge += TUNE.chargeRate * (0.5 + a * 0.035);
     let tier = -1;
@@ -303,12 +328,22 @@ export function stepVehicle(v, controls, track) {
   // ---- Track query ---------------------------------------------------------------
   const q = queryTrack(track, v.x, v.z, v.trackIdx);
   v.trackIdx = q.idx;
-  const onRoad = Math.abs(q.lat) <= q.hw + TUNE.carRadius && !q.gap;
-  const groundY = onRoad ? q.groundY : null;
+  // Horizontally over the road band? (deck height gate is separate so the car
+  // can ride the off-road plain beneath a hill without being yanked up to it.)
+  const absLat = Math.abs(q.lat);
+  const onRoadLat = absLat <= q.hw + TUNE.carRadius && !q.gap;
+  const nearDeck = !q.gap && Math.abs(v.y - q.groundY) < TUNE.roadSnapHeight;
+  // The road band rides the banked deck; beyond it the grass ramp slopes down
+  // to the off-road floor (groundHeightAt — same surface the renderer draws).
+  const overRoadBand = absLat <= q.hw + RUMBLE_W;
+  const geomGroundY = q.gap ? null : (overRoadBand ? q.groundY : groundHeightAt(track, q));
 
   // ---- 1.2 Wall collision ---------------------------------------------------------
-  // Walls exist wherever road exists (non-gap) and only up to wallTopHeight.
-  if (!q.gap && v.y < q.groundY + TUNE.wallTopHeight) {
+  // Solid walls only: non-solid stretches (wallSolid false) are drive-through
+  // gaps that lead off-road. Gated on the deck band (nearDeck) so a car riding
+  // the plain beneath a hill isn't pushed around by invisible walls.
+  if (!q.gap && onRoadLat && nearDeck && q.wallSolid &&
+      v.y < q.groundY + TUNE.wallTopHeight) {
     const limit = q.hw - TUNE.carRadius * 0.6;
     if (Math.abs(q.lat) > limit) {
       const side = Math.sign(q.lat);
@@ -341,7 +376,7 @@ export function stepVehicle(v, controls, track) {
 
   // ---- 1.3 Ground detection / landing / launching -----------------------------------
   if (v.grounded) {
-    if (groundY === null) {
+    if (geomGroundY === null) {
       // Road vanished under us (gap or off edge) → launch carrying the
       // slope's vertical velocity (ramps throw the car upward)
       v.grounded = false;
@@ -350,18 +385,32 @@ export function stepVehicle(v, controls, track) {
       v.airTime = 0;
       v.flipAccum = 0;
     } else {
-      const dy = groundY - v.y;
-      if (dy < -TUNE.launchDropGate) {
+      // Ride the deck when on it; beyond the road band ride the grass ramp
+      // (slopes down to the floor, so drivers can climb back onto the deck).
+      // Still over the road but far below the deck (under a bridge) → the flat
+      // floor plane, not a yank up to the deck.
+      const targetY = overRoadBand ? (nearDeck ? geomGroundY : track.offroadY) : geomGroundY;
+      // Launch gate reads the GROUND's own per-frame drop (prev vs new target),
+      // not the car's eased position — a cliff/ramp edge still launches even
+      // while the follow-lerp is easing toward the old height.
+      if (v.prevGroundY - targetY > TUNE.launchDropGate) {
         // Ground fell away faster than we can follow → airborne with slope vy
         v.grounded = false;
         v.vy = v._slopeVy || 0;
         v.airTime = 0;
         v.flipAccum = 0;
       } else {
-        // Follow ground (snaps up small steps, rides slopes)
-        v._slopeVy = groundY - v.prevGroundY;
-        v.prevGroundY = groundY;
-        v.y = groundY;
+        // Follow ground: climbs track the rising surface tightly, but descents
+        // EASE toward the ground (exponential lerp) so per-frame ramp/deck
+        // slope steps don't turn into y micro-jumps on steep grades. Snap
+        // exactly once converged so flats stay glued.
+        v._slopeVy = targetY - v.prevGroundY;
+        v.prevGroundY = targetY;
+        const prevY = v.y;
+        const dy = targetY - v.y;
+        v.y += dy * (dy > 0 ? TUNE.groundFollowUp : TUNE.groundFollow);
+        if (Math.abs(targetY - v.y) < 0.001) v.y = targetY;
+        v._groundVy = v.y - prevY;
         v._wasRampLip = q.rampLip;
         v.lastSafeIdxTimer = (v.lastSafeIdxTimer || 0) + 1;
         if (Math.abs(q.lat) < q.hw - 1.5 && !q.ramp && v.lastSafeIdxTimer > 8) {
@@ -372,10 +421,10 @@ export function stepVehicle(v, controls, track) {
     }
   } else {
     // Airborne → check landing
-    if (groundY !== null && v.y <= groundY && v.vy <= 0) {
-      v.y = groundY;
+    if (geomGroundY !== null && v.y <= geomGroundY && v.vy <= 0) {
+      v.y = geomGroundY;
       v.grounded = true;
-      v.prevGroundY = groundY;
+      v.prevGroundY = geomGroundY;
       v._slopeVy = 0;
       v.landT = 10;
       // 1.3 Landing impact & speed retention
@@ -394,17 +443,33 @@ export function stepVehicle(v, controls, track) {
       v.vy = 0;
       // Snap pitch back on landing (visual lerp continues below)
       v.pitch = ((v.pitch % 360) + 540) % 360 - 180;
+      v._pitchTgt = v.pitch;
     }
-    // 1.3 Fall-off respawn
-    if (v.y < q.groundY - TUNE.fallKillDepth || v.y < -TUNE.fallKillDepth) {
+    // 1.3 Fall-off respawn: fell below the current ground surface (deck, grass
+    // ramp, or off-road floor) by fallKillDepth → back to the last safe spot.
+    // The ramp means off-road falls land on drivable ground, so there is no
+    // separate "stranded far below the deck" case.
+    if (geomGroundY !== null
+        ? v.y < geomGroundY - TUNE.fallKillDepth
+        : v.y < track.offroadY - TUNE.fallKillDepth) {
       respawn(v);
     }
   }
 
+  // Off-road flag for speed/grip penalty (next frame's longitudinal pass uses
+  // it; over a gap the car is airborne over the road, not "off-road").
+  v.offroad = geomGroundY !== null && !(onRoadLat && nearDeck);
+
   // ---- Visual pitch / roll ---------------------------------------------------------
   if (v.grounded) {
-    const slopePitch = -Math.atan2(v._slopeVy || 0, Math.max(0.05, Math.abs(speedF))) * (180 / Math.PI);
-    v.pitch += (slopePitch - v.pitch) * 0.25;
+    // Pitch target from the car's actual (eased) vertical motion. EMA the
+    // target so per-segment slope changes don't rock the nose back and forth
+    // (teeter-totter), then ease the visual pitch toward it.
+    const slopePitch = clamp(
+      -Math.atan2(v._groundVy || 0, Math.max(0.05, Math.abs(speedF))) * (180 / Math.PI),
+      -60, 60);
+    v._pitchTgt += (slopePitch - v._pitchTgt) * TUNE.pitchTgtSmooth;
+    v.pitch += (v._pitchTgt - v.pitch) * TUNE.pitchFollow;
     const leanTarget = clamp(-v.driftAngle * 0.30 - controls.steer * absSpeed * 4.5, -14, 14);
     v.roll += (leanTarget - v.roll) * 0.18;
   } else {
@@ -430,7 +495,7 @@ function placeAtSample(v, track, idx) {
   v.x = s.x; v.y = s.y + 0.2; v.z = s.z;
   v.vx = 0; v.vy = 0; v.vz = 0;
   v.yaw = yawFromDir(s.fx, s.fz);
-  v.pitch = 0; v.roll = 0; v.flipAccum = 0;
+  v.pitch = 0; v.roll = 0; v.flipAccum = 0; v._pitchTgt = 0;
   v.grounded = true;
   v.prevGroundY = s.y;
   v._slopeVy = 0;

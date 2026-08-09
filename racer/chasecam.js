@@ -11,7 +11,7 @@
  *    polluting the smoothing state.
  */
 import { sinDeg, cosDeg } from "../engine/luts.js";
-import { queryTrack } from "./track.js";
+import { queryTrack, groundHeightAt } from "./track.js";
 import { tunable } from "../engine/tunable.js";
 
 const S = (min, max, step) => ({ min, max, step, restart: false });
@@ -28,6 +28,7 @@ const CAM = tunable("chasecam", {
   lookAhead:  12,    // aim this far ahead of the car
   lookHeight: 0,     // aim height above car
   fovRate:    0.3,
+  pitchRate:  0.3,   // camera view pitch smoothing (skybox doesn't jump)
   floorPad:   0.5,
 }, {
   baseDist:    S(2.0, 14.0, 0.1),
@@ -41,6 +42,7 @@ const CAM = tunable("chasecam", {
   lookAhead:   S(0.0, 12.0, 0.25),
   lookHeight:  S(0.0, 4.0, 0.05),
   fovRate:     S(0.01, 0.3, 0.005),
+  pitchRate:   S(0.02, 0.5, 0.005),
   floorPad:    S(0.2, 3.0, 0.05),
 }, { label: "Chase Camera" });
 
@@ -60,6 +62,7 @@ export function createChaseCam(v) {
     _h: CAM.baseHeight,
     _lat: 0,
     _fov: 1,
+    _pitch: 10,
     rear: false,
   };
 }
@@ -93,9 +96,14 @@ export function updateChaseCam(cam, v, track, rearHeld) {
   let cy = v.y + cam._h;
 
   // ---- Track floor clamp (don't sink into the road behind the car) ----------
+  // Ride the actual rendered surface (banked deck, grass ramp, then the flat
+  // floor) via groundHeightAt — NOT the invisible deck plane, which juts above
+  // the ramp and forced the camera up until |lat| passed hw+2.5, then released
+  // with a snap.
   const q = queryTrack(track, cx, cz, v.trackIdx);
-  if (!q.gap && Math.abs(q.lat) < q.hw + 2.5 && cy < q.groundY + CAM.floorPad) {
-    cy = q.groundY + CAM.floorPad;
+  if (!q.gap) {
+    const floor = groundHeightAt(track, q);
+    if (cy < floor + CAM.floorPad) cy = floor + CAM.floorPad;
   }
 
   // ---- Wall-hit shake ---------------------------------------------------------
@@ -115,7 +123,10 @@ export function updateChaseCam(cam, v, track, rearHeld) {
   const dx = tx - cam.x, dz = tz - cam.z;
   cam.yaw = (Math.atan2(dx, dz) * 180) / Math.PI;
   const dd = Math.hypot(dx, dz) || 0.001;
-  cam.pitch = (Math.atan2(cam.y - ty, dd) * 180) / Math.PI;
+  // Smooth the view pitch so steep descents / ramp-to-floor transitions don't
+  // make the camera (and the skybox) jump.
+  cam._pitch += ((Math.atan2(cam.y - ty, dd) * 180) / Math.PI - cam._pitch) * CAM.pitchRate;
+  cam.pitch = cam._pitch;
 
   // ---- FOV: widen (fovMul < 1) with speed and boost ---------------------------
   const fovT = 1 / (1 + speed * 0.16 + (v.boostT > 0 ? 0.12 : 0));
@@ -127,6 +138,7 @@ export function updateChaseCam(cam, v, track, rearHeld) {
 export function snapChaseCam(cam, v) {
   cam._yaw = v.yaw;
   cam._lat = 0;
+  cam._pitch = 10;
   const fx = sinDeg(v.yaw), fz = cosDeg(v.yaw);
   cam.x = v.x - fx * cam._dist;
   cam.z = v.z - fz * cam._dist;
