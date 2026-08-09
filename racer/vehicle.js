@@ -26,9 +26,9 @@ export const TUNE = tunable("vehicle", {
   topSpeed:      2.5,    // world units / frame
   reverseMax:    0.15,
   accel:         0.002,
-  brakeDecel:    0.05,
-  rollingDrag:   1,      // per-frame retention with no throttle
-  airDrag:       1,
+  brakeDecel:    0.005,
+  rollingDrag:   0.9,      // per-frame retention with no throttle
+  airDrag:       0.5,
 
   // Steering
   turnMax:       1.5,    // deg/frame at optimal speed
@@ -59,37 +59,37 @@ export const TUNE = tunable("vehicle", {
   boostTopMul:   1.8,
 
   // Vertical
-  gravity:       0.012,
-  maxFall:       2.5,
-  rampLipBoost:  0.6,    // extra vy at a flagged ramp lip
-  launchDropGate: 3,     // ground dropping faster than this/frame → airborne
-  groundFollow:   0.75,  // grounded descent ease — smoother downhill/ramp steps
-  groundFollowUp: 0.95,  // grounded climb ease — tracks rising ground tightly
-  pitchTgtSmooth: 0.4,   // EMA on the slope-pitch target — kills teeter-totter
+  gravity:       0.005,
+  maxFall:       8.0,
+  rampLipBoost:  0.5,    // extra vy at a flagged ramp lip
+  launchDropGate: 32,     // ground dropping faster than this/frame → airborne
+  groundFollow:   1.0,  // grounded descent ease — smoother downhill/ramp steps
+  groundFollowUp: 1.0,  // grounded climb ease — tracks rising ground tightly
+  pitchTgtSmooth: 0.8,   // EMA on the slope-pitch target — kills teeter-totter
   pitchFollow:    0.25,  // car pitch lerp toward the smoothed slope target
-  landHardVy:    -0.05,
-  landHardLoss:  0.7,    // speed retention on a hard landing
+  landHardVy:    -0.25,
+  landHardLoss:  0.005,    // speed retention on a hard landing
   airPitchRate:  1,      // deg/frame in-air pitch control
   flipRewardDeg: 120,
   flipBoostFrames: 180,
 
   // Walls
   carRadius:     0.05,
-  wallBounce:    1.5,
-  wallSpeedLoss: 0,      // scaled by impact normal speed
+  wallBounce:    1.0,
+  wallSpeedLoss: 0.5,      // scaled by impact normal speed
   wallStickyDrag: -0.005, // shallow-angle high-speed anti-wall-riding drag
   wallTopHeight: 0.5,    // walls only block below this height above road
 
   // Off-road (grass/dirt beyond the walls) — driving off-course is possible
   // but severely punished. WALL_SOLID "random" stretches leave gaps in the
   // walls (see track.js); beyond them the car rides track.offroadY.
-  offroadTopMul: 0.3,    // top speed fraction while off-road
-  offroadDrag:   0.97,   // per-frame speed retention off-road
-  offroadGrip:   1.4,    // lateral-retention multiplier off-road (looser)
+  offroadTopMul: 0.5,    // top speed fraction while off-road
+  offroadDrag:   1.0,   // per-frame speed retention off-road
+  offroadGrip:   0.5,    // lateral-retention multiplier off-road (looser)
   roadSnapHeight: 2,     // only ride the deck if within this vertical band
 
   // Respawn
-  fallKillDepth: 26,     // below road level → respawn
+  fallKillDepth: 64,     // below road level → respawn
   respawnFrames: 45,
 }, {
   topSpeed:       S(0.4, 2.5, 0.01),
