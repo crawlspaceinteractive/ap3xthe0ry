@@ -11,6 +11,12 @@
       "id": "hill-test",
       "name": "HILL TEST",
       "desc": "Elevation stress course — climbs and drops from the spline editor."
+    },
+    {
+      "file": "bank_test.track.json",
+      "id": "bank-test",
+      "name": "BANK TEST",
+      "desc": "Banked camber stress course (14°–18°) — verify ribbon + ground parity."
     }
   ]
 }

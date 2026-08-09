@@ -191,7 +191,10 @@ export function buildTrack(def) {
 
 // ---- Nearest-sample query ----------------------------------------------------
 // hint: last known sample index (searches a small wrapped window around it).
-// Returns { idx, groundY, lat, fx, fz, px, pz, hw, gap, rampLip, distSq }.
+// Returns { idx, t, groundY, lat, bank, fx, fz, px, pz, hw, gap, rampLip,
+//           distSq }. groundY follows the banked deck: center height plus
+// lerp(sin(bank)) * lat, which lands exactly on the editor's bilinear mesh
+// (samples carry bank in DEGREES).
 const SEARCH_WINDOW = 26;
 
 export function queryTrack(track, x, z, hint) {
@@ -222,11 +225,19 @@ export function queryTrack(track, x, z, hint) {
   const cz = a.z + (b.z - a.z) * t;
   const lat = (x - cx) * a.px + (z - cz) * a.pz;
 
+  // Banked ground height. Lerp the SINE of each sample's bank (not sin of the
+  // lerped angle) so the query rides the editor's bilinear deck exactly.
+  const bankA = a.bank || 0, bankB = b.bank || 0;
+  const bankRad = (bankA * Math.PI) / 180;
+  const sbA = Math.sin(bankRad), sbB = Math.sin((bankB * Math.PI) / 180);
+  const sb = sbA + (sbB - sbA) * t;
+
   return {
     idx: best,
     t,
-    groundY: cy,
+    groundY: cy + sb * lat,
     lat,
+    bank: bankA + (bankB - bankA) * t,   // degrees at the query point
     fx: a.fx, fz: a.fz,
     px: a.px, pz: a.pz,
     hw: a.hw,
