@@ -168,7 +168,12 @@ export class MenuController {
     if (this.capture) {
       const code = inp.firstPulse();
       if (code) {
-        if (code !== "Escape") inp.setBinding(this.capture, code);
+        if (code !== "Escape") {
+          inp.setBinding(this.capture, code);
+          racerSound.menuConfirm();
+        } else {
+          racerSound.menuDeny();
+        }
         this.capture = null;
       }
       return null;
@@ -177,9 +182,10 @@ export class MenuController {
     const e = this._edges(inp);
 
     if (this.mode === "MAIN") {
-      if (e.down) this.row = (this.row + 1) % MAIN_ITEMS.length;
-      if (e.up)   this.row = (this.row + MAIN_ITEMS.length - 1) % MAIN_ITEMS.length;
+      if (e.down) { this.row = (this.row + 1) % MAIN_ITEMS.length; racerSound.menuSelect(); }
+      if (e.up)   { this.row = (this.row + MAIN_ITEMS.length - 1) % MAIN_ITEMS.length; racerSound.menuSelect(); }
       if (e.confirm) {
+        racerSound.menuConfirm();
         const item = MAIN_ITEMS[this.row];
         if (item === "PLAY") { this.mode = "GAMEMODES"; this.gamemodeRow = 0; }
         if (item === "CONTROLS") this.mode = "CONTROLS";
@@ -192,11 +198,16 @@ export class MenuController {
     if (this.mode === "GAMEMODES") return this._tickGameModes(e);
     if (this.mode === "COURSES") return this._tickCourses(e);
     if (this.mode === "NOTICE") {
+      // Dismiss the unavailable-mode card back to GAMEMODES.
+      if (e.back) racerSound.menuDeny();
+      else if (e.confirm) racerSound.menuConfirm();
       if (e.back || e.confirm) this.mode = "GAMEMODES";
       return null;
     }
 
     if (this.mode === "CONTROLS") {
+      if (e.back) racerSound.menuDeny();
+      else if (e.confirm) racerSound.menuConfirm();
       if (e.back || e.confirm) this.mode = "MAIN";
       return null;
     }
@@ -209,9 +220,9 @@ export class MenuController {
   }
 
   _tickOptions(e, inp) {
-    if (e.down) this.optRow = (this.optRow + 1) % OPT_ROWS;
-    if (e.up)   this.optRow = (this.optRow + OPT_ROWS - 1) % OPT_ROWS;
-    if (e.back) { this._persist(); this.mode = "MAIN"; return null; }
+    if (e.down) { this.optRow = (this.optRow + 1) % OPT_ROWS; racerSound.menuSelect(); }
+    if (e.up)   { this.optRow = (this.optRow + OPT_ROWS - 1) % OPT_ROWS; racerSound.menuSelect(); }
+    if (e.back) { racerSound.menuDeny(); this._persist(); this.mode = "MAIN"; return null; }
 
     const hDir = e.axX > 0.4 ? 1 : e.axX < -0.4 ? -1 : 0;
     hDir !== 0 ? this._held++ : (this._held = 0);
@@ -223,22 +234,25 @@ export class MenuController {
       else racerSound.setMusicVol(Math.max(0, Math.min(1, v.music + hDir * 0.05)));
     }
 
-    if (this.optRow === 2 && (e.confirm || e.left || e.right)) this._toggleFullscreen();
-    if (e.confirm && this.optRow === 3) { this.mode = "BINDINGS"; this.bindRow = 0; this._bindReturn = "OPTIONS"; }
-    if (e.confirm && this.optRow === 4) { this._persist(); this.mode = "MAIN"; }
+    if (this.optRow === 2 && (e.confirm || e.left || e.right)) { racerSound.menuConfirm(); this._toggleFullscreen(); }
+    if (e.confirm && this.optRow === 3) { racerSound.menuConfirm(); this.mode = "BINDINGS"; this.bindRow = 0; this._bindReturn = "OPTIONS"; }
+    if (e.confirm && this.optRow === 4) { racerSound.menuConfirm(); this._persist(); this.mode = "MAIN"; }
     return null;
   }
 
   _tickGameModes(e) {
-    if (e.down) this.gamemodeRow = (this.gamemodeRow + 1) % GAMEMODE_ITEMS.length;
-    if (e.up)   this.gamemodeRow = (this.gamemodeRow + GAMEMODE_ITEMS.length - 1) % GAMEMODE_ITEMS.length;
-    if (e.back) { this.mode = "MAIN"; return null; }
+    if (e.down) { this.gamemodeRow = (this.gamemodeRow + 1) % GAMEMODE_ITEMS.length; racerSound.menuSelect(); }
+    if (e.up)   { this.gamemodeRow = (this.gamemodeRow + GAMEMODE_ITEMS.length - 1) % GAMEMODE_ITEMS.length; racerSound.menuSelect(); }
+    if (e.back) { racerSound.menuDeny(); this.mode = "MAIN"; return null; }
     if (e.confirm) {
       const item = GAMEMODE_ITEMS[this.gamemodeRow];
       if (item === "TIME ATTACK") {
+        racerSound.menuConfirm();
         this.enterCourses(this.selectedLevelIdx);
         return null;
       }
+      // SINGLE RACE / HEAD2HEAD — not in this demo → deny buzz.
+      racerSound.menuDeny();
       this.noticeMode = item;
       this.mode = "NOTICE";
     }
@@ -248,12 +262,13 @@ export class MenuController {
   _tickCourses(e) {
     const n = levelCount();
     if (n <= 0) { this.mode = "GAMEMODES"; return null; }
-    if (e.down) this.courseRow = (this.courseRow + 1) % n;
-    if (e.up)   this.courseRow = (this.courseRow + n - 1) % n;
-    if (e.right) this.courseRow = (this.courseRow + 1) % n;
-    if (e.left)  this.courseRow = (this.courseRow + n - 1) % n;
-    if (e.back) { this.mode = "GAMEMODES"; return null; }
+    if (e.down)  { this.courseRow = (this.courseRow + 1) % n; racerSound.menuSelect(); }
+    if (e.up)    { this.courseRow = (this.courseRow + n - 1) % n; racerSound.menuSelect(); }
+    if (e.right) { this.courseRow = (this.courseRow + 1) % n; racerSound.menuSelect(); }
+    if (e.left)  { this.courseRow = (this.courseRow + n - 1) % n; racerSound.menuSelect(); }
+    if (e.back) { racerSound.menuDeny(); this.mode = "GAMEMODES"; return null; }
     if (e.confirm) {
+      racerSound.menuConfirm();
       this.selectedLevelIdx = this.courseRow;
       this._persist();
       return "PLAY";
@@ -262,10 +277,10 @@ export class MenuController {
   }
 
   _tickPause(e) {
-    if (e.back) { this._persist(); return "RESUME"; }
+    if (e.back) { racerSound.menuDeny(); this._persist(); return "RESUME"; }
 
-    if (e.down) this.pauseRow = (this.pauseRow + 1) % PAUSE_ROWS;
-    if (e.up)   this.pauseRow = (this.pauseRow + PAUSE_ROWS - 1) % PAUSE_ROWS;
+    if (e.down) { this.pauseRow = (this.pauseRow + 1) % PAUSE_ROWS; racerSound.menuSelect(); }
+    if (e.up)   { this.pauseRow = (this.pauseRow + PAUSE_ROWS - 1) % PAUSE_ROWS; racerSound.menuSelect(); }
 
     const hDir = e.axX > 0.4 ? 1 : e.axX < -0.4 ? -1 : 0;
     hDir !== 0 ? this._held++ : (this._held = 0);
@@ -277,20 +292,21 @@ export class MenuController {
       else racerSound.setMusicVol(Math.max(0, Math.min(1, v.music + hDir * 0.05)));
     }
 
-    if (this.pauseRow === 3 && (e.confirm || e.left || e.right)) this._toggleFullscreen();
+    if (this.pauseRow === 3 && (e.confirm || e.left || e.right)) { racerSound.menuConfirm(); this._toggleFullscreen(); }
     if (e.confirm) {
-      if (this.pauseRow === 0) { this._persist(); return "RESUME"; }
-      if (this.pauseRow === 4) { this.mode = "BINDINGS"; this.bindRow = 0; this._bindReturn = "PAUSE"; }
-      if (this.pauseRow === 5) { this._persist(); return "QUIT"; }
+      if (this.pauseRow === 0) { racerSound.menuConfirm(); this._persist(); return "RESUME"; }
+      if (this.pauseRow === 4) { racerSound.menuConfirm(); this.mode = "BINDINGS"; this.bindRow = 0; this._bindReturn = "PAUSE"; }
+      if (this.pauseRow === 5) { racerSound.menuConfirm(); this._persist(); return "QUIT"; }
     }
     return null;
   }
 
   _tickBindings(e, inp) {
-    if (e.down) this.bindRow = (this.bindRow + 1) % BIND_ROWS;
-    if (e.up)   this.bindRow = (this.bindRow + BIND_ROWS - 1) % BIND_ROWS;
-    if (e.back) { this.mode = this._bindReturn; return null; }
+    if (e.down) { this.bindRow = (this.bindRow + 1) % BIND_ROWS; racerSound.menuSelect(); }
+    if (e.up)   { this.bindRow = (this.bindRow + BIND_ROWS - 1) % BIND_ROWS; racerSound.menuSelect(); }
+    if (e.back) { racerSound.menuDeny(); this.mode = this._bindReturn; return null; }
     if (e.confirm) {
+      racerSound.menuConfirm();
       if (this.bindRow < BIND_ACTIONS.length) this.capture = BIND_ACTIONS[this.bindRow].key;
       else if (this.bindRow === BIND_ACTIONS.length) inp.resetBindings();
       else this.mode = this._bindReturn;
@@ -299,6 +315,8 @@ export class MenuController {
   }
 
   _tickAbout(e) {
+    if (e.back) racerSound.menuDeny();
+    else if (e.confirm) racerSound.menuConfirm();
     if (e.back || e.confirm) { this.mode = "MAIN"; return null; }
     const dir = e.axY > 0.4 ? 1 : e.axY < -0.4 ? -1 : 0;
     dir !== 0 ? this._scrollHeld++ : (this._scrollHeld = 0);

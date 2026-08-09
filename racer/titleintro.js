@@ -3,7 +3,8 @@
  * START → orange loading bar. Runs entirely in 2D (no 3D scene behind it).
  *
  * Sequence (all timings in 60Hz fixed steps):
- *   WARN   orange card, black safety text, hold 3s then fade to black
+ *   WARN   warning card (WARNING.png background fitted to the display frame,
+ *          with the bigfont safety text overlaid) hold 3s then fade to black
  *   SWOOP  "AP3X" squashed at top-left, stretches while swooping to just above
  *          mid-screen; blinks during the swoop; the motion repeats 3×
  *   SLIDE  "THE0RY" slides in from the right (left edge lands under AP3X's
@@ -14,6 +15,7 @@
  */
 import { drawRect, drawText, rgba } from "../engine/renderer.js";
 import { SCREEN_W, SCREEN_H } from "../engine/luts.js";
+import { assetUrl } from "../engine/asseturls.js";
 import {
   drawBigText, drawBigTextX, measureBigText,
   drawBodyText, measureBodyText,
@@ -25,13 +27,17 @@ const BLACK  = rgba(0, 0, 0);
 const WHITE  = rgba(255, 255, 255);
 const GHOSTS = [rgba(90, 90, 95), rgba(160, 160, 168), rgba(235, 235, 240)];
 
+// Warning-screen background art (2x the software frame, 4:3) — downscaled
+// once to the 320x240 frame on load, then blitted each WARN frame.
+const WARNING_URL = assetUrl("assets/2D/ui/intro/WARNING.png");
+
 const WARN_HOLD = 180;   // 3s
 const WARN_FADE = 45;
 const SWOOP_T   = 20;   // 1s total
 const SWOOPS    = 3;
 const SLIDE_T   = 60;   // 1s
 const WAIT_T    = 120;    // 2s
-const LOAD_T    = 300;
+const LOAD_T    = 100;
 
 const TITLE_H = 44;
 const SQUASH0 = 0.0;    // starting horizontal squash of AP3X
@@ -45,6 +51,31 @@ export class TitleIntro {
     this.fade = 0;        // passed to present() — warning fade-to-black
     this.finished = false;
     this._layout = null;
+    this._warningPixels = null;  // WARNING.png scaled into the 320x240 frame
+
+    // Load the warning background. The reel (racer/intro.js) runs for seconds
+    // before the WARN card shows, so this is almost always ready by then; the
+    // WARN phase falls back to the solid orange card until it lands.
+    const im = new Image();
+    im.onload = () => {
+      try {
+        const c = document.createElement("canvas");
+        c.width = SCREEN_W;
+        c.height = SCREEN_H;
+        const g = c.getContext("2d", { willReadFrequently: true });
+        g.imageSmoothingEnabled = false;
+        // Fit to the display frame: the art is 2x the software frame at the
+        // same 4:3, so a straight scale to SCREEN_W x SCREEN_H is a perfect
+        // cover with no cropping.
+        g.drawImage(im, 0, 0, SCREEN_W, SCREEN_H);
+        this._warningPixels = new Uint32Array(
+          g.getImageData(0, 0, SCREEN_W, SCREEN_H).data.buffer
+        );
+      } catch (err) {
+        console.warn("[titleintro] warning bg failed", err);
+      }
+    };
+    im.src = WARNING_URL;
   }
 
   // Final composition: AP3X above-center-left, THE0RY tucked underneath with
@@ -147,7 +178,13 @@ export class TitleIntro {
     const t = this.t;
 
     if (this.phase === "WARN") {
-      drawRect(rd, 0, 0, SCREEN_W, SCREEN_H, ORANGE);
+      // Background: WARNING.png fitted to the frame, falling back to the solid
+      // orange card until the image is in. The safety text sits on top.
+      if (this._warningPixels) {
+        rd.buf32.set(this._warningPixels);
+      } else {
+        drawRect(rd, 0, 0, SCREEN_W, SCREEN_H, ORANGE);
+      }
       // Warning text in the bigfont, auto-fit to the widest line.
       const lines = ["THIS IS A GAME,", "NOT REAL LIFE,", "DO NOT TRY THIS", "AT HOME."];
       let wh = 18;

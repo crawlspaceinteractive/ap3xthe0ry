@@ -7,15 +7,13 @@
  */
 import { buildPoly, rgba, shadeFace } from "../engine/renderer.js";
 import { sinDeg, cosDeg } from "../engine/luts.js";
+import { RUMBLE_W } from "./track.js";
 
 const CULL_DIST      = 165;   // max sample distance from camera
 const CULL_DIST_SQ   = CULL_DIST * CULL_DIST;
 const BEHIND_MARGIN  = 16;    // keep samples slightly behind the camera
 const RUMBLE_DIST_SQ = 120 * 120;
-const GRASS_DIST_SQ  = 90 * 90;
 const WALL_H         = 1.7;
-const RUMBLE_W       = 0.9;
-const GRASS_W        = 16.0;
 
 const ROAD_TINT   = rgba(230, 230, 232);
 const GRASS_TINT  = rgba(215, 235, 210);
@@ -44,11 +42,13 @@ export function buildTrackTris(track, tex, camera, frame) {
   const n = track.count;
 
   // ---- Ground plane under everything (camera-centered) ----------------------
-  // A flat textured plain at track.minY - 0.4 hides the sky gradient / void
-  // below the horizon. Camera-centered grid (subdivided so the grass texture
-  // maps with acceptable perspective); UVs are world-anchored so the texture
-  // scrolls naturally as the car drives. Pushed to the back via +500 sort bias.
-  const gy = track.minY - 0.4;
+  // A flat textured plain at track.offroadY hides the sky gradient / void
+  // below the horizon (and doubles as the off-road driving surface — physics
+  // rides track.offroadY, see vehicle.js). Camera-centered grid (subdivided
+  // so the grass texture maps with acceptable perspective); UVs are
+  // world-anchored so the texture scrolls naturally as the car drives. Pushed
+  // to the back via +500 sort bias.
+  const gy = track.offroadY != null ? track.offroadY : track.minY - 0.4;
   if (camera.y > gy) {
     const R = 340; // extends past the fog distance so it meets the horizon
     if (tex.grass) {
@@ -192,31 +192,41 @@ export function buildTrackTris(track, tex, camera, frame) {
 
         // Wall: base at the outer edge of the rumble, top +WALL_H along the
         // banked surface normal so it hugs the cambered deck (world +Y on flat).
-        const w0 = edgePt(a, side, a.hw + RUMBLE_W);
-        const w1 = edgePt(b, side, b.hw + RUMBLE_W);
-        const wpts = [
-          { x: w0.x, y: w0.y, z: w0.z },
-          { x: w1.x, y: w1.y, z: w1.z },
-          { x: w1.x + up1.x * WALL_H, y: w1.y + up1.y * WALL_H, z: w1.z + up1.z * WALL_H },
-          { x: w0.x + up0.x * WALL_H, y: w0.y + up0.y * WALL_H, z: w0.z + up0.z * WALL_H },
-        ];
-        for (const t of buildPoly(wpts, side > 0 ? wallCol : shadeFace(wallCol, 0.8), null, camera)) out.push(t);
+        // Only where BOTH samples have a solid wall — non-solid stretches are
+        // drive-through gaps (tire-stack barriers stand in, see tirestacks.js).
+        if (a.wallSolid !== false && b.wallSolid !== false) {
+          const w0 = edgePt(a, side, a.hw + RUMBLE_W);
+          const w1 = edgePt(b, side, b.hw + RUMBLE_W);
+          const wpts = [
+            { x: w0.x, y: w0.y, z: w0.z },
+            { x: w1.x, y: w1.y, z: w1.z },
+            { x: w1.x + up1.x * WALL_H, y: w1.y + up1.y * WALL_H, z: w1.z + up1.z * WALL_H },
+            { x: w0.x + up0.x * WALL_H, y: w0.y + up0.y * WALL_H, z: w0.z + up0.z * WALL_H },
+          ];
+          for (const t of buildPoly(wpts, side > 0 ? wallCol : shadeFace(wallCol, 0.8), null, camera)) out.push(t);
+        }
       }
     }
 
-    // ---- Grass aprons ----------------------------------------------------------
-    if (!a.gap && !b.gap && d2 < GRASS_DIST_SQ && tex.grass) {
+    // ---- Grass apron → off-road ramp -------------------------------------------
+    // Slopes smoothly from the deck at the wall base (hw+RUMBLE_W) down to the
+    // flat off-road floor plane (track.offroadY) over track.transW, so drivers
+    // who leave the road can drive back up onto the deck instead of being stuck
+    // below it. Physics rides this same surface (track.js groundHeightAt), so
+    // the drawn ramp is exactly what the car drives on. Culled at the full
+    // sample distance since the ramp can extend well past the road.
+    if (!a.gap && !b.gap && d2 < CULL_DIST_SQ && tex.grass) {
       for (const side of [-1, 1]) {
         const g0 = edgePt(a, side, a.hw + RUMBLE_W);
-        const g1 = edgePt(a, side, a.hw + GRASS_W);
-        const g2 = edgePt(b, side, b.hw + GRASS_W);
         const g3 = edgePt(b, side, b.hw + RUMBLE_W);
+        const g1 = edgePt(a, side, a.hw + RUMBLE_W + track.transW);
+        const g2 = edgePt(b, side, b.hw + RUMBLE_W + track.transW);
         const U = 0.07;
         const gpts = [
-          { x: g0.x, y: g0.y - 0.15, z: g0.z, u: g0.x * U, v: g0.z * U },
-          { x: g1.x, y: g1.y - 0.35, z: g1.z, u: g1.x * U, v: g1.z * U },
-          { x: g2.x, y: g2.y - 0.35, z: g2.z, u: g2.x * U, v: g2.z * U },
-          { x: g3.x, y: g3.y - 0.15, z: g3.z, u: g3.x * U, v: g3.z * U },
+          { x: g0.x, y: g0.y - 0.02, z: g0.z, u: g0.x * U, v: g0.z * U },
+          { x: g1.x, y: track.offroadY + 0.02, z: g1.z, u: g1.x * U, v: g1.z * U },
+          { x: g2.x, y: track.offroadY + 0.02, z: g2.z, u: g2.x * U, v: g2.z * U },
+          { x: g3.x, y: g3.y - 0.02, z: g3.z, u: g3.x * U, v: g3.z * U },
         ];
         for (const t of buildPoly(gpts, GRASS_TINT, tex.grass, camera)) {
           t.avgZ += 0.15; // grass sorts behind the road/rumble at shared edges

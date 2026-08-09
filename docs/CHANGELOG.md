@@ -404,3 +404,128 @@ Purpose: full history of changes & fixes so regressions can be traced.
   untouched (queryTrack still uses full hw), so the car can still ride the
   bank. `node --check`, `tools/ribbon-smoke.js`, and quad-build checks on all
   three maps at multiple yaws pass.
+
+- CHANGE (off-road, unreleased): track walls are now randomly solid per run —
+  `buildTrack` seeds run-length wall flags (`wallSolidSeed`, default
+  `20260808` via exported `mulberry32`; `WALL_SOLID_CHANCE 0.7`,
+  `WALL_RUN_MIN 3`, `WALL_RUN_LEN 6`) so gaps are long enough to drive
+  through, and ramp/gap samples are always open. `cfg.wallSolid: "all"`
+  restores always-solid walls. `queryTrack` returns `wallSolid` (true only
+  when both flanking samples are solid) and `trackrender.js` skips wall quads
+  on open runs, so the physics boundary always matches the drawn wall.
+
+- CHANGE (off-road, unreleased): beyond the road edge the car drives on an
+  off-road plain (`track.offroadY = minY − 0.4`, rendered flat so physics and
+  graphics share the same surface). Off-road: top speed ×0.3, per-frame drag
+  ×0.97, lateral grip ×1.4 (heavier understeer), drift charge disabled, and a
+  new `OFF ROAD` HUD indicator + dirt kick-up particles. Wall collision now
+  requires `onRoadLat && nearDeck && q.wallSolid`, so gaps are passable and
+  leaving the deck is what actually punishes you. Fall-off respawn gained an
+  off-road clause: falling farther than `fallKillDepth` below the LOCAL deck
+  plane respawns (so cliff/bridge falls on elevation courses return you to the
+  road instead of stranding the car on the distant flat plain).
+
+- CHANGE (off-road, unreleased): new `racer/tirestacks.js` places destructible
+  tire-stack barriers on open (non-solid) wall runs, deterministically seeded
+  by arc distance. Each stack is a 3-tire column of quad units (`buildPoly`,
+  side quads + shaded caps); the car is never blocked — overlapping the stack
+  knocks it aside (lean tumble + pop), it slides, and falls to the off-road
+   plain. Stepped in `racergame._step`, rendered with `buildTireStackTris` in
+   the shared painter pass, torn down on `unloadLevel`. `node --check` and
+   `tools/ribbon-smoke.js` (extended: wall solidity determinism, offroadY,
+   tire-stack placement determinism) pass.
+
+- CHANGE (off-road, unreleased): the off-road plain is no longer a flat drop —
+   grass now slopes smoothly from the road edge down to `track.offroadY` so
+   drivers who leave the track can drive back onto it instead of being stuck
+   under the deck. Track building exports the shared constants `RUMBLE_W`
+   (0.9), `TRANS_MIN_W` (16), and `TRANS_SLOPE` (0.35, ≈19° max gradient) and
+   stores `track.transW = max(TRANS_MIN_W, (maxEdge − (minY − OFFROAD_DROP)) /
+   TRANS_SLOPE)`, where `maxEdge` is the highest road edge including bank lift
+   `abs(sin(bank))·(hw + RUMBLE_W)` — so even steep banked sections keep the
+   ramp climbable. The new exported `track.js` helper `groundHeightAt(track,
+   q)` returns the deck plane inside ±(hw+RUMBLE_W) and, beyond, a smoothstep
+   `u²(3−2u)` ramp to `offroadY`; the renderer's grass apron is replaced by a
+   matching ramp quad (inner edge at `hw+RUMBLE_W`, outer at
+   `hw+RUMBLE_W+transW`, `offroadY`) so the drawn slope is exactly drivable.
+   `vehicle.js` rides that surface via `groundHeightAt` (still using the flat
+   floor when under a bridge), and the earlier fall-off "local deck drop"
+   respawn clause is removed since the ramp eliminates the stranded-cliff
+   case. Verified with `node --check`, `tools/ribbon-smoke.js` section [7]
+   (deck → monotonic slope → floor, max drop 0.175 per 0.5 unit, `transW ≥
+   16`), a hill-test drive-off/drive-back simulation (rides the ramp from deck
+   height, climbs from the −27.87 floor back to deck level), and quad-build
+   checks on all four maps at 4 yaws.
+
+- CHANGE (HUD, unreleased): the racing minimap now auto-scales to the track
+   instead of assuming the old fixed `MM_RANGE` (140, which clipped any course
+   wider than ~126 half-span — e.g. BANK TEST's 488-unit span). `drawMinimap`
+   derives its range from the track samples (`minimapRange`: max |x|/|z| across
+   samples, padded ×1.15 so the outline keeps a small margin) and maps the
+   spline, start tick, driver dot and heading nub with that scale, so large
+   courses zoom out to fit and small ones zoom in to use the whole box.
+
+- CHANGE (menu/audio, unreleased): the main menu now plays the menu theme —
+   22. U-Turn (the last soundtrack entry), looped — instead of silence.
+   `racerSound.playMenuMusic()` stops any current song and loops U-Turn with a
+   fade-in; it runs on every entry into MENU (boot + quitting a race) and
+   disables the race shuffle watchdog while the menu owns the music. Selecting
+   a course fades the theme out (`fadeOutMusic(450)` on PLAY) and entering
+   RACE hands the music back to the 22-track shuffle via `startRace()` —
+   `_nextTrack()` now stops any looping menu handle before the shuffled track
+   starts, so the two never overlap. U-Turn stays out of the shuffle.
+
+- CHANGE (menu/loading, unreleased): entering a course from the menu now runs
+   a quick loading screen — the map-select globe (same `drawGlobePlaceholder`
+   + crosshair look as COURSES) with the orange LOADING bar on top
+   (`RACE_LOADING_T = 90` frames ≈ 1.5s). `RacerGame` tracks the loading
+   destination via `_loadingTo` ("RACE" on PLAY, "MENU" on QUIT); the RACE
+   path resolves the level then enters RACE + `startRace()`, and a race-start
+   failure falls back to MENU with the theme restored. The course→menu loading
+   screen (last track's sky) is unchanged.
+
+- CHANGE (boot intro, unreleased): the WARN card now uses the new
+   `assets/2D/ui/intro/WARNING.png` as its full-frame background instead of the
+   solid orange fill. The 640×480 art (2× the software frame, same 4:3) is
+   downscaled once to the 320×240 frame with `imageSmoothingEnabled = false`
+   and blitted straight into the renderer buffer each WARN frame, so it is
+   fitted to the display exactly (no cropping) and passes through the normal
+   upscale + dither in `present()`. It loads in parallel at boot (the
+   `racer/intro.js` reel covers the latency) and the WARN phase falls back to
+   the orange card until the image lands.
+
+- CHANGE (driving feel, unreleased): smoother downhill riding on steep grades
+   and ramps — three fixes in `racer/vehicle.js` + `racer/chasecam.js`.
+   (1) Grounded descents now EASE toward the ground (exponential lerp,
+   `groundFollow` 0.75, climbs still tight at `groundFollowUp` 0.95) instead of
+   hard-snapping each frame, so per-segment slope steps no longer turn into y
+   micro-jumps; the launch gate was raised (`launchDropGate` 1 → 3) and now
+   reads the ground's OWN per-frame drop (`prevGroundY − targetY`) rather than
+   the car's lagged position, so continuous steep descents (hill-test deck
+   drops ~2.6 u/frame at top speed) are ridden smoothly instead of toggling
+   airborne/landed. (2) The car's visual pitch target (from the actual eased
+   vertical motion) is EMA-smoothed (`pitchTgtSmooth` 0.4, clamped ±60°) before
+   the 0.25 follow-lerp, killing the nose teeter-totter at slope transitions —
+   max per-frame pitch delta roughly halved, mean delta ~2× lower on a 12-seg
+   sustained hill-test descent. (3) `chasecam.js` floor clamp now rides the
+   actual rendered surface via `groundHeightAt` (banked deck → grass ramp →
+   flat floor) instead of the invisible deck-plane extension, which had forced
+   the camera up on the ramp band and snapped it down past `|lat| = hw+2.5`;
+   and camera view pitch is smoothed (`CAM.pitchRate` 0.3) so the skybox stops
+   jumping on steep descents and ramp→floor transitions (max per-frame camera
+   pitch delta ~3× smaller). All new values are live tunables. Verified with
+   `node --check`, `tools/ribbon-smoke.js`, and downhill simulations on
+   hill-test/bank-test at multiple speeds.
+
+- CHANGE (menu feedback, unreleased): menu confirm/deny SFX. Two new sounds,
+   `assets/audio/sounds/sfx_menu_confirm.mp3` (wired via
+   `racerSound.menuConfirm()`) and `sfx_menu_deny.mp3` (`racerSound.menuDeny()`),
+   fire on every menu edge across the game: MAIN item select, GAMEMODES
+   (TIME ATTACK confirm; SINGLE RACE / HEAD2HEAD are unavailable so they buzz
+   deny and drop into the NOTICE card), COURSES (confirm starts the race, back
+   returns to PLAY), NOTICE + CONTROLS dismiss, OPTIONS (fullscreen toggle,
+   key-bindings, BACK) and its PAUSE twin (RESUME, fullscreen, bindings, QUIT),
+   BINDINGS (successful key capture blips confirm; pressing ESC during capture
+   cancels with deny; back returns to the calling menu), and ABOUT (confirm/
+   back dismiss). Slider adjusts and row navigation stay silent — only
+   confirm/cancel decisions beep.

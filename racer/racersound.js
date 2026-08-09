@@ -10,6 +10,9 @@
  *      crunch   — file-based one-shot landing thud
  *      boost    — file-based one-shot rising whoosh
  *      tierup   — file-based blip on drift charge tier crossing
+ *      confirm  — menu OK / select blip
+ *      deny     — menu cancel / unavailable blip
+ *      select   — menu item-highlight tick
  *
  * Volume plumbing:
  *   _sfxVol / _musicVol are local multipliers 0..1.
@@ -47,6 +50,10 @@ const MUSIC_TRACKS = [
   "assets/audio/soundtrack/22._u-turn.mp3",
 ].map(f => assetUrl(f));
 
+// The menu theme — 22. U-Turn, the last entry — loops at the main menu.
+// Races keep the full shuffled playlist; the menu song never re-enters it.
+const MENU_TRACK_IDX = MUSIC_TRACKS.length - 1;
+
 // SFX definitions: file-based across the board.
 const SFX = {
   engine: {
@@ -73,7 +80,19 @@ const SFX = {
     src: assetUrl("assets/audio/sounds/sfx_tierup.mp3"),
     group: "sfx",
   },
-};
+      confirm: {
+        src: assetUrl("assets/audio/sounds/sfx_menu_confirm.mp3"),
+        group: "sfx",
+      },
+      deny: {
+        src: assetUrl("assets/audio/sounds/sfx_menu_deny.mp3"),
+        group: "sfx",
+      },
+      select: {
+        src: assetUrl("assets/audio/sounds/sfx_menu_select.mp3"),
+        group: "sfx",
+      },
+    };
 
 function shuffle(arr) {
   const a = arr.slice();
@@ -197,6 +216,24 @@ class RacerSound {
     }, 1000);
   }
 
+  /** Menu OK / select blip. */
+  async menuConfirm() {
+    await this._ready;
+    audio.play("confirm", { volume: this._sfxVol });
+  }
+
+  /** Menu cancel / deny blip (back out, unavailable mode, cancelled capture). */
+  async menuDeny() {
+    await this._ready;
+    audio.play("deny", { volume: this._sfxVol });
+  }
+
+  /** Menu tick — played when the highlighted item moves. */
+  async menuSelect() {
+    await this._ready;
+    audio.play("select", { volume: this._sfxVol });
+  }
+
   /** Call once, on the first transition into RACE (i.e. after a user gesture). */
   async startRace() {
     if (!this._started) {
@@ -211,6 +248,21 @@ class RacerSound {
     }
     // Bring the music back up after a teardown fade-out.
     this.fadeMusic(1, 500);
+  }
+
+  /** Play the menu theme (22. U-Turn) looping, replacing whatever was on.
+   *  Menu mode owns the music — the race shuffle watchdog is disabled until
+   *  startRace() hands control back. Safe to call on every MENU entry; a
+   *  fresh loop starts each time the menu is (re)entered. */
+  async playMenuMusic() {
+    this._musicOn = false;
+    this._stopMusic();
+    const id = "music.menu";
+    await this._ready;
+    await audio.preload({ [id]: { src: MUSIC_TRACKS[MENU_TRACK_IDX], group: "music" } });
+    const h = audio.play(id, { loop: true });
+    if (h) { this._musicHandle = h; this._stalledChecks = 0; }
+    this.fadeMusic(1, 400);
   }
 
   /** Per fixed step (60 Hz) while racing. */
@@ -268,10 +320,21 @@ class RacerSound {
   }
 
   // --- Music playlist ------------------------------------------------------
+  /** Halt the current music handle (a looping menu theme or a one-shot race
+   *  track) if any, so overlapping songs never play on a hand-off. */
+  _stopMusic() {
+    if (this._musicHandle) {
+      try { this._musicHandle.stop(); } catch (_) {}
+      this._musicHandle = null;
+    }
+  }
+
   async _nextTrack() {
     if (this._advancing || !this._musicOn) return;
     this._advancing = true;
     try {
+      // A looping menu theme must die before the shuffle track starts.
+      this._stopMusic();
       // Try tracks in shuffled order; skip any that fail to load.
       for (let attempts = 0; attempts < this._order.length; attempts++) {
         this._trackIdx = (this._trackIdx + 1) % this._order.length;

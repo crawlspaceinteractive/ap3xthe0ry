@@ -154,25 +154,36 @@ const MM_MARGIN = 8;
 const MM_SIZE = 84;
 const MM_X = SCREEN_W - MM_MARGIN - MM_SIZE;
 const MM_Y = MM_MARGIN;
-const MM_RANGE = 140;               // half the world span mapped (track r ≤ ~126)
-const MM_S = MM_SIZE / (MM_RANGE * 2);
 
-function mapToMini(x, z) {
-  return {
-    mx: (MM_X + (x + MM_RANGE) * MM_S) | 0,
-    my: (MM_Y + (z + MM_RANGE) * MM_S) | 0,
-  };
+// The map auto-scales to the track: the half-span of the sample box (centered on
+// the world origin, the same frame the editor exports), padded ~15% so the spline
+// outline never touches the box edge — larger courses just zoom the view out to
+// keep the whole loop on screen.
+function minimapRange(track) {
+  let r = 0;
+  for (let i = 0; i < track.count; i++) {
+    const ax = Math.abs(track.samples[i].x), az = Math.abs(track.samples[i].z);
+    if (ax > r) r = ax;
+    if (az > r) r = az;
+  }
+  return Math.max(1, r * 1.15);
 }
 
 function drawMinimap(rd, v, track) {
   // Track overview — drawn twice for the outlined look: a 6px steel base with a
   // 4px white spline on top (decimated — each sample ≈ 1-2 map px is plenty).
+  const range = minimapRange(track);
+  const scale = MM_SIZE / (range * 2);
+  const mm = (x, z) => ({
+    mx: (MM_X + (x + range) * scale) | 0,
+    my: (MM_Y + (z + range) * scale) | 0,
+  });
   const s = track.samples, n = track.count;
   const step = Math.max(1, (n / 120) | 0);
   const trace = (thick, col) => {
-    let prev = mapToMini(s[0].x, s[0].z);
+    let prev = mm(s[0].x, s[0].z);
     for (let i = step; i <= n; i += step) {
-      const cur = mapToMini(s[i % n].x, s[i % n].z);
+      const cur = mm(s[i % n].x, s[i % n].z);
       drawThickLine(rd, prev.mx, prev.my, cur.mx, cur.my, col, thick);
       prev = cur;
     }
@@ -181,15 +192,15 @@ function drawMinimap(rd, v, track) {
   trace(4, rgba(255, 255, 255));
 
   // Start/finish tick
-  const st = mapToMini(s[track.spawnIdx].x, s[track.spawnIdx].z);
+  const st = mm(s[track.spawnIdx].x, s[track.spawnIdx].z);
   drawRect(rd, st.mx - 1, st.my - 1, 3, 3, rgba(255, 210, 70), true);
 
   // Driver dot + short heading nub pointing the way the car faces
-  const p = mapToMini(v.x, v.z);
+  const p = mm(v.x, v.z);
   const fx = sinDeg(v.yaw), fz = cosDeg(v.yaw);
   const tip = {
-    mx: (p.mx + fx * MM_S * 8) | 0,
-    my: (p.my + fz * MM_S * 8) | 0,
+    mx: (p.mx + fx * scale * 8) | 0,
+    my: (p.my + fz * scale * 8) | 0,
   };
   drawLine(rd, p.mx, p.my, tip.mx, tip.my, rgba(120, 240, 200));
   drawCircle(rd, p.mx, p.my, 3, rgba(120, 240, 200), true);
@@ -357,6 +368,17 @@ export function drawRacerHUD(rd, v, frame, fonts, place, track, lt) {
       drawBodyText(rd, fonts, "BOOST!", (SCREEN_W - w) >> 1, 80, 36, col, 2);
     } else {
       drawText(rd, "BOOST!", (SCREEN_W >> 1) - 42, 84, col, 2);
+    }
+  }
+
+  // ---- Off-road ---------------------------------------------------------------
+  if (v.offroad) {
+    const c = rgba(190, 175, 120);
+    if (fonts && fonts.body) {
+      const w = measureBodyText(fonts, "OFF ROAD", 30, 2);
+      drawBodyText(rd, fonts, "OFF ROAD", (SCREEN_W - w) >> 1, 104, 30, c, 2);
+    } else {
+      drawText(rd, "OFF ROAD", (SCREEN_W >> 1) - 80, 108, c, 4);
     }
   }
 

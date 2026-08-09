@@ -174,5 +174,102 @@ console.log(`[4] flat regression — bank-0 track: groundY == cy, edgePt.y == s.
   check("flat track: all samples bank 0, groundY==y, edgePt.y==y, up=(0,1,0)", allFlat, true, 0);
 }
 
+console.log(`[5] wall solidity + off-road surface`);
+{
+  const t1 = buildTrack({ cp: BANKED_CP, halfWidth: 7, sampleSpace: 2.0, wallSolidSeed: 1234 });
+  const t2 = buildTrack({ cp: BANKED_CP, halfWidth: 7, sampleSpace: 2.0, wallSolidSeed: 1234 });
+  let identical = t1.samples.length === t2.samples.length;
+  for (let i = 0; i < t1.samples.length && identical; i++) {
+    if (t1.samples[i].wallSolid !== t2.samples[i].wallSolid) identical = false;
+  }
+  check("wallSolid deterministic per seed", identical, true, 0);
+
+  const hasSolid = t1.samples.some((s) => s.wallSolid === true);
+  const hasOpen = t1.samples.some((s) => s.wallSolid === false);
+  check("random mode has both solid + open runs", hasSolid && hasOpen, true, 0);
+
+  // Ramps/gaps are always open
+  const tRamp = buildTrack({ cp: BANKED_CP, halfWidth: 7, sampleSpace: 2.0, applyDefaultRamp: true, wallSolidSeed: 99 });
+  let rampsOpen = true;
+  for (const s of tRamp.samples) if (s.ramp && s.wallSolid) rampsOpen = false;
+  check("ramp samples are always non-solid", rampsOpen, true, 0);
+
+  // "all" mode restores always-solid walls
+  const tAll = buildTrack({ cp: BANKED_CP, halfWidth: 7, sampleSpace: 2.0, wallSolid: "all" });
+  check("wallSolid:all → every sample solid", tAll.samples.every((s) => s.wallSolid), true, 0);
+
+  // offroadY rides the same plane the renderer draws (minY - 0.4)
+  let minY = Infinity;
+  for (const s of t1.samples) if (s.y < minY) minY = s.y;
+  check("offroadY == minY - 0.4", t1.offroadY, minY - 0.4, 1e-9);
+
+  // queryTrack exposes wallSolid (segment = both samples solid)
+  const qSolid = queryTrack(t1, t1.samples[0].x, t1.samples[0].z);
+  const a0 = t1.samples[qSolid.idx], b0 = t1.samples[(qSolid.idx + 1) % t1.count];
+  check("queryTrack.wallSolid == a&&b", qSolid.wallSolid, a0.wallSolid !== false && b0.wallSolid !== false, 0);
+}
+
+console.log(`[6] tire stacks placed on open wall runs`);
+{
+  const { createTireStacks } = await import("../racer/tirestacks.js");
+  const t = buildTrack({ cp: BANKED_CP, halfWidth: 7, sampleSpace: 2.0, wallSolidSeed: 7 });
+  const stacks = createTireStacks(t);
+  check("tire stacks generated", stacks.length > 0, true, 0);
+  // Each stack sits near a non-solid sample (its own sample must be open)
+  let onOpen = true;
+  const sArr = t.samples;
+  for (const st of stacks) {
+    let best = -1, bd = Infinity;
+    for (let i = 0; i < sArr.length; i++) {
+      const dx = st.x - sArr[i].x, dz = st.z - sArr[i].z;
+      const d = dx * dx + dz * dz;
+      if (d < bd) { bd = d; best = i; }
+    }
+    if (sArr[best].wallSolid !== false) onOpen = false;
+  }
+  check("every stack is on a non-solid sample", onOpen, true, 0);
+  // Determinism: same seed → same stack count/positions
+  const stacks2 = createTireStacks(buildTrack({ cp: BANKED_CP, halfWidth: 7, sampleSpace: 2.0, wallSolidSeed: 7 }));
+  let same = stacks.length === stacks2.length;
+  for (let i = 0; i < stacks.length && same; i++) {
+    if (Math.abs(stacks[i].x - stacks2[i].x) > 1e-9 || Math.abs(stacks[i].z - stacks2[i].z) > 1e-9) same = false;
+  }
+  check("tire stack placement deterministic", same, true, 0);
+}
+
+console.log(`[7] off-road ramp (groundHeightAt) — deck → smooth slope → floor`);
+{
+  const { groundHeightAt } = await import("../racer/track.js");
+  // Straight flat track: perpendicular projection is exact, so the deck plane
+  // at the query point is the deck itself (no curvature drift).
+  const t = buildTrack({ cp: [
+    { x: 0, y: 2, z: 0 }, { x: 60, y: 2, z: 0 }, { x: 120, y: 2, z: 0 },
+    { x: 180, y: 2, z: 0 }, { x: 240, y: 2, z: 0 }, { x: 300, y: 2, z: 0 },
+  ], halfWidth: 7, sampleSpace: 1.5 });
+  const s = t.samples[Math.floor(t.samples.length / 2)];
+  const edge = s.hw + 0.9; // hw+RUMBLE_W
+  const pts = [];
+  for (let lat = 0; lat <= edge + t.transW + 1; lat += 0.5) {
+    pts.push({ lat, h: groundHeightAt(t, queryTrack(t, s.x + s.px * lat, s.z + s.pz * lat)) });
+  }
+  // Within the road band → the deck plane
+  check("ramp: deck height inside band", pts[0].h, s.y, 1e-3);
+  // At the wall base it meets the deck, at the ramp end it meets the floor
+  const atEdge = pts.find((p) => p.lat >= edge - 0.26);
+  check("ramp: starts at deck near the wall base", atEdge.h, s.y, 1e-3);
+  const atEnd = pts[pts.length - 1];
+  check("ramp: ends at offroadY", atEnd.h, t.offroadY, 1e-3);
+  // Monotonic non-increasing and slope stays ≤ TRANS_SLOPE (0.35/unit)
+  let monotonic = true, maxDrop = 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].h > pts[i - 1].h + 1e-6) monotonic = false;
+    maxDrop = Math.max(maxDrop, pts[i - 1].h - pts[i].h);
+  }
+  check("ramp: monotonic deck→floor", monotonic, true, 0);
+  check("ramp: max drop per 0.5 unit ≤ 0.35*0.5", maxDrop <= 0.175 + 1e-6, true, 0);
+  // transW adapts to elevation range (flat track → minimum width)
+  check("transW at least the minimum (16)", t.transW >= 16 - 1e-9, true, 0);
+}
+
 console.log(failures ? `\n${failures} failure(s)` : "\nAll ribbon-parity checks passed.");
 process.exit(failures ? 1 : 0);
