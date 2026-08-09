@@ -1,5 +1,7 @@
 # AP3X THE0RY (crawlspaceEngine racer)
 
+<img width="853" height="480" alt="image" src="https://github.com/user-attachments/assets/a04dec3b-b9c0-4984-8767-530dc27c18e8" />
+
 A PS1-style software-rasterized arcade racer built on the shared Crawlspace
 engine. All rendering is CPU-side into a low-res framebuffer - no WebGL for
 visuals (Three.js is used only to parse GLB models).
