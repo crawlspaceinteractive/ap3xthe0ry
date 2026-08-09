@@ -26,11 +26,9 @@ locally. Missing GLB models fall back to procedural geometry and log a warning.
 
 `main.js` mounts a 640x480 canvas (internal 320x240 render upscaled 2x +
 dithered) and starts `RacerGame`. States: INTRO (warning card → title swoop
-→ PRESS START rev) → MENU → RACE ⇄ PAUSE.
-
-## Controls
-
-- WASD — throttle / brake+reverse / steer
+ → PRESS START rev) → MENU (looped U-Turn theme, PLAY submenu) → RACE ⇄ PAUSE.
+Entering a course now shows a quick map-select globe loading screen with an
+orange LOADING bar before the race begins.
 - SHIFT — drift (hold + steer, release to boost)
 - R — rear view (hold)
 - T — reset car

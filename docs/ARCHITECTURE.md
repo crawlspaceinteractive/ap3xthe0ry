@@ -11,13 +11,15 @@ retired Froyo platformer (still shipped, unloaded by the racer boot).
 |---|---|
 | racergame.js | Orchestrator: states INTRO > MENU > RACE <> PAUSE; fixed-step 60Hz sim, asset load, headlight FX, particles, render |
 | menus.js | MenuController — MAIN / GAMEMODES / COURSES / CONTROLS / OPTIONS / BINDINGS / ABOUT and PAUSE |
+| intro.js | DOM-overlay boot reel before the title intro: splash, dev logo punch, and reveal |
 | titleintro.js | Boot cinematic: warning card, AP3X swoop, THE0RY slide, PRESS START, loading bar |
 | vehicle.js | Arcade physics: accel/steer, drift + tier charge to boost, wall bounce, ramp lips, flips, TUNE tunables |
 | vehiclemesh.js | GLB car renderer: bakes mesh, full yaw/pitch/roll, headlight rig; procedural kart fallback |
 | levels.js | Level list / course catalog (LEVELS); every map registers here |
 | track.js | Closed Catmull-Rom spline + spatial queries (same samples for physics and render) |
 | trackload.js | Parse/fetch spline-editor JSON into buildTrack defs |
-| trackrender.js | Builds track triangles from the shared sample array |
+| trackrender.js | Builds track triangles from the shared sample array; supports open-wall runs and off-road grass ramp edges |
+| tirestacks.js | Destructible roadside tire barriers for open wall sections |
 | chasecam.js | Third-person chase cam: yaw lag, speed distance, drift offset, look-ahead FOV, rear-view hold |
 | hudfont.js | Sprite numeral + smallfont glyphs, loadHudFonts, draw helpers |
 | racerhud.js | HUD overlay: speed gauge, drift meter, boost flash, position, lap times |

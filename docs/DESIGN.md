@@ -55,10 +55,14 @@ verifiable 1:1 against the flat bucket. Unknown names pass through.
 ### Audio (racer/racersound.js)
 - Shuffled 22-track playlist + engine/screech loops + crash/land/boost/
   tier blips; 1s rev with fade-out.
+- Main menu now loops track 22 U-Turn as its own theme, with confirm/deny/select
+  menu SFX and a dedicated race shuffle handoff.
 
 ### Menus (racer/menus.js)
 - MenuController owns MAIN / GAMEMODES / COURSES / CONTROLS /
   OPTIONS / BINDINGS / ABOUT. COURSES scrolls levels.js LEVELS.
+- PLAY opens a GAMEMODES submenu (SINGLE RACE / TIME ATTACK / HEAD2HEAD), and
+  course entry now uses a brief loading screen with the map-select globe.
 - Pause is a menu mode (enterPause) with the same sliders/bindings as
   Options; QUIT rebuilds the vehicle and returns to MENU.
 
@@ -90,5 +94,11 @@ CHANGELOG.md.
   clobbers body glyphs.
 - Per-mesh GLB textures; "textured" colorMode; Froyo model-swap frames.
 - Vehicle facing fix (applyNodeTransforms) + asset CDN migration.
+- Off-road now exists beyond the road edge: a drivable grass ramp connects the
+  edge to the off-road plane, walls can be randomly open per run, and tire stacks
+  appear on open wall sections.
+- Minimap auto-scales to each track instead of assuming a fixed range.
+- Main menu plays U-Turn, enters courses through a quick LOADING screen, and
+  uses confirm/deny menu SFX.
 
 ---
