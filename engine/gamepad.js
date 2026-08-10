@@ -284,6 +284,11 @@ export class GamepadManager {
     return this.safeGetGamepads().filter(Boolean).length;
   }
 
+  /** Whether a gamepad is currently connected at the given slot. */
+  isConnected(padIndex) {
+    return !!this.safeGetGamepads()[padIndex];
+  }
+
   _resolve(padIndex, logicalIndex) {
     const map = this._buttonMaps[padIndex];
     if (!map) return logicalIndex;

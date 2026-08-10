@@ -182,6 +182,25 @@ export function buildTrack(def) {
     cur.segLen = Math.hypot(next.x - cur.x, next.z - cur.z) || 1;
   }
 
+  // ---- Lap-honor gates (control points) -------------------------------------
+  // A lap only scores after the car visits every control point in order (each
+  // control point = a disc centered on the spline at the nearest sample). The
+  // first control point (CP[0], the start/finish zone) is skipped — the finish
+  // is the seam, handled by the lap timer's arc-distance wrap. Players must
+  // thread these discs forward; reversing over the line no longer counts.
+  const gates = [];
+  for (let i = 1; i < n; i++) {
+    const cp = pts[i];
+    let gi = 0, gd = Infinity;
+    for (let k = 0; k < count; k++) {
+      const dx = samples[k].x - cp.x;
+      const dz = samples[k].z - cp.z;
+      const d = dx * dx + dz * dz;
+      if (d < gd) { gd = d; gi = k; }
+    }
+    gates.push({ x: samples[gi].x, z: samples[gi].z, r: halfWidth + 6 });
+  }
+
   // ---- Optional AHURA west-straight ramp (gated) ----------------------------
   let lipIdx = 0;
   if (applyDefaultRamp) {
@@ -246,6 +265,7 @@ export function buildTrack(def) {
     samples,
     count,
     totalLen: dist,
+    gates,
     minY,
     offroadY: minY - OFFROAD_DROP,
     transW: Math.max(TRANS_MIN_W, (maxEdge - (minY - OFFROAD_DROP)) / TRANS_SLOPE),

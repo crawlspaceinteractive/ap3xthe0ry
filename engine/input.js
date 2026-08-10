@@ -73,7 +73,16 @@ function loadBindings() {
 }
 
 export class InputController {
-  constructor() {
+  /**
+   * @param {object} opts
+   *   padIndex  — gamepad index to read (default: first connected pad).
+   *   keyboard  — bind the keyboard (default true). P2 in split-screen sets
+   *               this false so the keyboard stays with P1.
+   *   gp        — a shared GamepadManager to read from (P1 passes its own so
+   *               P2 reuses the same polling loop; ownership stays with the
+   *               creator, which must destroy it).
+   */
+  constructor(opts = {}) {
     this.mask = 0;
     this.prevMask = 0;
     this.axisX = 0;
@@ -99,23 +108,40 @@ export class InputController {
     // Lets us catch sub-frame taps that would otherwise be missed by mask diffing.
     this._keyPulses = new Set();
 
-    this._onKeyDown = this._onKeyDown.bind(this);
-    this._onKeyUp = this._onKeyUp.bind(this);
-    this._onBlur = this._onBlur.bind(this);
+    this._useKeyboard = opts.keyboard !== false;
 
-    this.gp = new GamepadManager({ deadzone: 0.18 });
-    this.gp.start();
+    if (this._useKeyboard) {
+      this._onKeyDown = this._onKeyDown.bind(this);
+      this._onKeyUp = this._onKeyUp.bind(this);
+      this._onBlur = this._onBlur.bind(this);
+    }
+
+    // Explicit pad index (P2 = pad 1) or null for "first connected pad".
+    this._fixedPadIndex = opts.padIndex != null ? opts.padIndex : null;
+
+    // Shared polling: a passed-in GamepadManager is used without being
+    // started/destroyed here (ownership stays with whoever created it).
+    this._ownsGp = false;
+    if (opts.gp) {
+      this.gp = opts.gp;
+    } else {
+      this.gp = new GamepadManager({ deadzone: 0.18 });
+      this.gp.start();
+      this._ownsGp = true;
+    }
 
     // Track pads so we can read sticks; use first connected
     this._activePadIndex = null;
-    this.gp.on("connected", (pad) => {
-      if (this._activePadIndex === null) this._activePadIndex = pad.index;
-    });
-    this.gp.on("disconnected", (pad) => {
-      if (this._activePadIndex === pad.index) this._activePadIndex = null;
-    });
+    if (this._fixedPadIndex === null) {
+      this.gp.on("connected", (pad) => {
+        if (this._activePadIndex === null) this._activePadIndex = pad.index;
+      });
+      this.gp.on("disconnected", (pad) => {
+        if (this._activePadIndex === pad.index) this._activePadIndex = null;
+      });
+    }
 
-    if (typeof window !== "undefined") {
+    if (this._useKeyboard && typeof window !== "undefined") {
       window.addEventListener("keydown", this._onKeyDown);
       window.addEventListener("keyup", this._onKeyUp);
       window.addEventListener("blur", this._onBlur);
@@ -123,12 +149,32 @@ export class InputController {
   }
 
   destroy() {
-    if (typeof window !== "undefined") {
+    if (this._useKeyboard && typeof window !== "undefined") {
       window.removeEventListener("keydown", this._onKeyDown);
       window.removeEventListener("keyup", this._onKeyUp);
       window.removeEventListener("blur", this._onBlur);
     }
-    this.gp.destroy();
+    if (this._ownsGp) this.gp.destroy();
+  }
+
+  /**
+   * Pin the controller's pad source after construction (split-screen slot
+   * assignment). index: >=0 = specific gamepad slot, null = auto (first
+   * connected), -1 = keyboard only (never reads a pad). A function is called
+   * fresh every sample so slot assignment can be dynamic.
+   */
+  setPadSource(index) {
+    this._fixedPadIndex = index;
+  }
+
+  /** Effective gamepad slot this frame, or null when keyboard-only/unplugged.
+   *  A resolved `null` (from a source function or a fixed null) means "auto":
+   *  grab the first connected pad via _activePadIndex. */
+  _resolvedPadIndex() {
+    const f = this._fixedPadIndex;
+    const idx = typeof f === "function" ? f(this) : f;
+    if (idx === null) return this._activePadIndex;
+    return idx >= 0 ? idx : null;
   }
 
   _onKeyDown(e) {
@@ -215,7 +261,7 @@ export class InputController {
     let gpX = 0, gpY = 0;
     let gpOrbitX = 0;
     let gpOrbitY = 0;
-    const padIndex = this._activePadIndex;
+    const padIndex = this._resolvedPadIndex();
     if (padIndex !== null) {
       const gp = this.gp;
       if (gp.isPressed(padIndex, BTN.A))     gpMask |= BTN_FLAGS.A;
@@ -291,9 +337,13 @@ export class InputController {
   justReleased(flag) {
     return (this.mask & flag) === 0 && (this.prevMask & flag) !== 0;
   }
-  isGamepadConnected() { return this._activePadIndex !== null; }
+  isGamepadConnected() {
+    const padIndex = this._resolvedPadIndex();
+    return padIndex !== null && this.gp.isConnected(padIndex);
+  }
 
   rumble(opts) {
-    if (this._activePadIndex !== null) this.gp.vibrate(this._activePadIndex, opts);
+    const padIndex = this._resolvedPadIndex();
+    if (padIndex !== null) this.gp.vibrate(padIndex, opts);
   }
 }

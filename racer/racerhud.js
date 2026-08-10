@@ -50,6 +50,11 @@ import {
 
 const TIER_COLORS = [rgba(80, 165, 255), rgba(255, 150, 50), rgba(200, 90, 255)];
 const ALERT_RED = rgba(255, 60, 60);
+// Checkpoint ("CP x/y") HUD readout — hidden per request. The underlying
+// gate-progress tracking (lapTimer.nextGate / track.gates, used for lap-honor
+// checks) keeps running either way; this only suppresses the on-screen text
+// in drawLapTimer + drawSplitHUD. Flip back to true to restore it.
+const SHOW_CHECKPOINT_COUNTER = false;
 const BAR_X = 110, BAR_Y = 229, BAR_W = 100, BAR_H = 6;
 
 // ---- Analog speedometer (bottom-right, behind the digital readout) ----------
@@ -69,45 +74,49 @@ const GAUGE_RED  = rgba(255, 90, 70);
 const GAUGE_HUB  = rgba(60, 60, 80);
 const GAUGE_NEEDLE = rgba(255, 210, 70);
 
-function gaugePoint(frac, radius) {
+function gaugePoint(cx, cy, frac, radius) {
   const rad = ((GAUGE_START + frac * GAUGE_SWEEP) * Math.PI) / 180;
   return {
-    x: (GAUGE_CX + Math.cos(rad) * radius) | 0,
-    y: (GAUGE_CY + Math.sin(rad) * radius) | 0,
+    x: (cx + Math.cos(rad) * radius) | 0,
+    y: (cy + Math.sin(rad) * radius) | 0,
   };
 }
 
-function drawSpeedo(rd, kmh) {
-  // Rim + face (rim drawn first, face fills in on top) — blended so the dial
-  // is half-opaque and the scene behind shows through.
-  drawCircle(rd, GAUGE_CX, GAUGE_CY, GAUGE_R + 3, GAUGE_RIM, false, GAUGE_ALPHA);
-  drawCircle(rd, GAUGE_CX, GAUGE_CY, GAUGE_R - 2, GAUGE_FACE, true, GAUGE_ALPHA);
-  drawCircle(rd, GAUGE_CX, GAUGE_CY, GAUGE_R - 2, GAUGE_RIM, false, GAUGE_ALPHA);
+// Generic analog gauge draw at an arbitrary center/radius — drawSpeedo (full-
+// screen HUD) and the split-screen gauges both route through this, scaling
+// the tick/needle/hub insets by r/GAUGE_R so a smaller dial keeps the same
+// proportions instead of just cropping.
+function drawSpeedoAt(rd, cx, cy, r, kmh, alpha) {
+  const rs = r / GAUGE_R;
+  drawCircle(rd, cx, cy, r + 3 * rs, GAUGE_RIM, false, alpha);
+  drawCircle(rd, cx, cy, r - 2 * rs, GAUGE_FACE, true, alpha);
+  drawCircle(rd, cx, cy, r - 2 * rs, GAUGE_RIM, false, alpha);
 
-  // Tick marks — major every 50 km/h, minor every 25; redline past 250
   for (let k = 0; k <= GAUGE_MAX; k += GAUGE_TICK_STEP) {
     const major = (k % 50) === 0;
-    const r1 = GAUGE_R - (major ? 4 : 2);
-    const r2 = GAUGE_R - (major ? 8 : 6);
+    const r1 = r - (major ? 4 : 2) * rs;
+    const r2 = r - (major ? 8 : 6) * rs;
     const col = k >= 250 ? GAUGE_RED : GAUGE_TICK;
-    const a = gaugePoint(k / GAUGE_MAX, r1);
-    const b = gaugePoint(k / GAUGE_MAX, r2);
-    drawLine(rd, a.x, a.y, b.x, b.y, col, GAUGE_ALPHA);
+    const a = gaugePoint(cx, cy, k / GAUGE_MAX, r1);
+    const b = gaugePoint(cx, cy, k / GAUGE_MAX, r2);
+    drawLine(rd, a.x, a.y, b.x, b.y, col, alpha);
   }
 
-  // Needle — 3px thick along the deflection direction
   const frac = Math.max(0, Math.min(1, kmh / GAUGE_MAX));
-  const tip = gaugePoint(frac, GAUGE_R - 8);
-  const nx = tip.x - GAUGE_CX, ny = tip.y - GAUGE_CY;
+  const tip = gaugePoint(cx, cy, frac, r - 8 * rs);
+  const nx = tip.x - cx, ny = tip.y - cy;
   const len = Math.hypot(nx, ny) || 1;
   const ox = -ny / len, oy = nx / len;
   for (let off = -1; off <= 1; off++) {
-    drawLine(rd, GAUGE_CX + ox * off, GAUGE_CY + oy * off, tip.x + ox * off, tip.y + oy * off, GAUGE_NEEDLE, GAUGE_ALPHA);
+    drawLine(rd, cx + ox * off, cy + oy * off, tip.x + ox * off, tip.y + oy * off, GAUGE_NEEDLE, alpha);
   }
 
-  // Center hub
-  drawCircle(rd, GAUGE_CX, GAUGE_CY, 2, GAUGE_HUB, true, GAUGE_ALPHA);
-  drawCircle(rd, GAUGE_CX, GAUGE_CY, 2, GAUGE_RIM, false, GAUGE_ALPHA);
+  drawCircle(rd, cx, cy, 2 * rs, GAUGE_HUB, true, alpha);
+  drawCircle(rd, cx, cy, 2 * rs, GAUGE_RIM, false, alpha);
+}
+
+function drawSpeedo(rd, kmh) {
+  drawSpeedoAt(rd, GAUGE_CX, GAUGE_CY, GAUGE_R, kmh, GAUGE_ALPHA);
 }
 
 // ---- Mileage ticker (center top) ---------------------------------------------
@@ -258,19 +267,24 @@ function measureLapString(fonts, str, targetH) {
   return total;
 }
 
-function drawLapTimer(rd, lt, fonts) {
+function drawLapTimer(rd, lt, fonts, track) {
   if (!lt) return;
   const composed = !!(fonts && fonts.speed && fonts.body);
   const bestStr = "BEST " + (lt.bestMs > 0 ? formatLapTime(lt.bestMs) : "--:--.--");
   const curStr = formatLapTime(lt.curMs);
   const bestColor = lt.bestMs > 0 ? ALERT_RED : 0xffffffff;
+  const cpStr = SHOW_CHECKPOINT_COUNTER && track && track.gates && track.gates.length
+    ? "CP " + Math.min(lt.nextGate, track.gates.length) + "/" + track.gates.length
+    : null;
+  const cpMet = cpStr && lt.nextGate * 2 >= track.gates.length;
+  const cpColor = cpMet ? rgba(140, 220, 160) : 0xff8899bb;
 
   // Once a best lap exists the WHOLE line — numbers included — renders red:
   // route it through the smallfont/body path (digits are merged into the body
   // map) so blitGlyph tints the numerals instead of blitting baked steel.
   const bestRed = lt.bestMs > 0;
 
-  let bestW, curW, bestH, curH;
+  let bestW, curW, bestH, curH, cpW = 0, cpH = 0;
   if (composed) {
     bestW = bestRed
       ? measureBodyText(fonts, bestStr, LAP_BEST_SIZE, LAP_GAP)
@@ -278,6 +292,10 @@ function drawLapTimer(rd, lt, fonts) {
     curW = measureLapString(fonts, curStr, LAP_TIME_SIZE);
     bestH = LAP_BEST_SIZE;
     curH = LAP_TIME_SIZE;
+    if (cpStr) {
+      cpH = 6;
+      cpW = measureBodyText(fonts, cpStr, cpH, 1);
+    }
   } else {
     const bs = Math.max(1, Math.round(LAP_BEST_SIZE / 5));
     const cs = Math.max(1, Math.round(LAP_TIME_SIZE / 5));
@@ -285,10 +303,14 @@ function drawLapTimer(rd, lt, fonts) {
     curW = curStr.length * 5 * cs;
     bestH = 5 * bs;
     curH = 5 * cs;
+    if (cpStr) {
+      cpH = 5;
+      cpW = cpStr.length * 5;
+    }
   }
 
-  const panelW = Math.max(bestW, curW) + 8;
-  const panelH = 3 + bestH + 3 + curH + 3;
+  const panelW = Math.max(bestW, curW, cpW) + 8;
+  const panelH = 3 + bestH + 3 + curH + 3 + (cpStr ? 3 + cpH + 3 : 0);
   const px = (SCREEN_W - panelW) >> 1;
   const py = LAP_PY;
   drawRect(rd, px, py, panelW, panelH, rgba(14, 10, 26));
@@ -301,18 +323,29 @@ function drawLapTimer(rd, lt, fonts) {
     if (bestRed) drawBodyText(rd, fonts, bestStr, bestX, py + 3, LAP_BEST_SIZE, bestColor, LAP_GAP);
     else drawLapString(rd, fonts, bestStr, bestX, py + 3, LAP_BEST_SIZE, bestColor);
     drawLapString(rd, fonts, curStr, curX, curY, LAP_TIME_SIZE, 0xffffffff);
+    if (cpStr) {
+      const cpy = curY + curH + 3;
+      drawBodyText(rd, fonts, cpStr, px + ((panelW - cpW) >> 1), cpy, cpH, cpColor, 1);
+    }
   } else {
     drawText(rd, bestStr, bestX, py + 3, bestColor, Math.max(1, Math.round(LAP_BEST_SIZE / 5)));
     drawText(rd, curStr, curX, curY, 0xffffffff, Math.max(1, Math.round(LAP_TIME_SIZE / 5)));
+    if (cpStr) {
+      drawText(rd, cpStr, px + ((panelW - cpW) >> 1), curY + curH + 3, cpColor, 1);
+    }
   }
 }
 
-export function drawRacerHUD(rd, v, frame, fonts, place, track, lt) {
+export function drawRacerHUD(rd, v, frame, fonts, place, track, lt, opts = {}) {
+  if (opts.view) {
+    drawSplitHUD(rd, v, frame, fonts, place, track, lt, opts);
+    return;
+  }
   // ---- Mileage ticker ---------------------------------------------------------
   drawMileage(rd, v, fonts);
 
   // ---- Lap timer (below the mileage ticker) ------------------------------------
-  drawLapTimer(rd, lt, fonts);
+  drawLapTimer(rd, lt, fonts, track);
 
   // ---- Position (placeholder — driven by a future race system) ----------------
   if (fonts && place) {
@@ -399,6 +432,162 @@ export function drawRacerHUD(rd, v, frame, fonts, place, track, lt) {
       drawBodyText(rd, fonts, "FLIP!", (SCREEN_W - w) >> 1, 84, 36, ALERT_RED, 2);
     } else {
       drawText(rd, "FLIP!", (SCREEN_W >> 1) - 24, 88, ALERT_RED, 2);
+    }
+  }
+}
+
+// ---- Split-screen (HEAD2HEAD) compact HUD -------------------------------------
+// Anchors every element into the player's y-band (view.y0, view.h) so nothing
+// bleeds across the split at HALF_H. A deliberately sparser readout than the
+// full-screen HUD: player tag + position, lap count + current time, mini
+// minimap, digital speed, drift meter, and a single priority alert line.
+const P1_ACCENT = rgba(120, 240, 200);
+const P2_ACCENT = rgba(120, 170, 255);
+
+function pickSplitAlert(v, frame) {
+  if (v.respawnT > 0) return { text: "RESPAWNING", color: ALERT_RED };
+  if (v.boostT > 0 && (frame & 4)) {
+    return { text: "BOOST!", color: TIER_COLORS[Math.min(2, v.boostTier)] };
+  }
+  if (v.offroad) return { text: "OFF ROAD", color: rgba(190, 175, 120) };
+  if (!v.grounded && Math.abs(v.flipAccum) > 90) return { text: "FLIP!", color: ALERT_RED };
+  return null;
+}
+
+// Split-screen gauge radius — scaled down from the full-screen GAUGE_R (56)
+// to comfortably clear a HALF_H (120px) band alongside the lap timer/minimap.
+const SPLIT_GAUGE_R = 26;
+
+function drawSplitMinimap(rd, allPlayers, track, y0) {
+  const size = 44;
+  const mmx = SCREEN_W - 4 - size;
+  const mmy = y0 + 4;
+  const range = minimapRange(track);
+  const scale = size / (range * 2);
+  const mm = (x, z) => ({
+    mx: (mmx + (x + range) * scale) | 0,
+    my: (mmy + (z + range) * scale) | 0,
+  });
+  const s = track.samples, n = track.count;
+  const step = Math.max(1, (n / 120) | 0);
+  const trace = (thick, col) => {
+    let prev = mm(s[0].x, s[0].z);
+    for (let i = step; i <= n; i += step) {
+      const cur = mm(s[i % n].x, s[i % n].z);
+      drawThickLine(rd, prev.mx, prev.my, cur.mx, cur.my, col, thick);
+      prev = cur;
+    }
+  };
+  trace(3, rgba(95, 120, 155));
+  trace(2, rgba(255, 255, 255));
+
+  const st = mm(s[track.spawnIdx].x, s[track.spawnIdx].z);
+  drawRect(rd, st.mx, st.my, 2, 2, rgba(255, 210, 70), true);
+
+  // Every driver's dot + heading nub, not just this band's own car — so each
+  // player can see where the other one is on the same shared map.
+  for (const pl of allPlayers) {
+    const v = pl.vehicle;
+    const accent = pl.color === 1 ? P2_ACCENT : P1_ACCENT;
+    const p = mm(v.x, v.z);
+    const fx = sinDeg(v.yaw), fz = cosDeg(v.yaw);
+    const tip = { mx: (p.mx + fx * scale * 6) | 0, my: (p.my + fz * scale * 6) | 0 };
+    drawLine(rd, p.mx, p.my, tip.mx, tip.my, accent);
+    drawCircle(rd, p.mx, p.my, 2, accent, true);
+  }
+}
+
+function drawSplitHUD(rd, v, frame, fonts, place, track, lt, opts) {
+  const { y0, h } = opts.view;
+  const accent = opts.color === 1 ? P2_ACCENT : P1_ACCENT;
+  const fontsOK = !!(fonts && fonts.body && fonts.speed);
+
+  // Player tag + position, top-left.
+  const tag = opts.color === 1 ? "P2" : "P1";
+  if (fontsOK) {
+    drawBodyText(rd, fonts, tag, 4, y0 + 4, 12, accent, 0);
+    if (fonts.pos) drawPlace(rd, fonts, place, 4, y0 + 18, 30);
+  } else {
+    drawText(rd, tag, 4, y0 + 2, accent, 1);
+    drawText(rd, String(place || 1), 4, y0 + 14, 0xffffffff, 2);
+  }
+
+  // Lap count + current lap time, top-center.
+  if (lt) {
+    const lapStr = "LAP " + lt.lap;
+    if (fontsOK) {
+      const w = measureBodyText(fonts, lapStr, 10, 1);
+      drawBodyText(rd, fonts, lapStr, (SCREEN_W - w) >> 1, y0 + 3, 10, accent, 1);
+      const t = formatLapTime(lt.curMs);
+      const tw = measureLapString(fonts, t, 8);
+      drawLapString(rd, fonts, t, (SCREEN_W - tw) >> 1, y0 + 15, 8, 0xffffffff);
+    } else {
+      drawText(rd, lapStr, (SCREEN_W >> 1) - lapStr.length * 3, y0 + 4, accent, 1);
+      drawText(rd, formatLapTime(lt.curMs), (SCREEN_W >> 1) - formatLapTime(lt.curMs).length * 5, y0 + 16, 0xffffffff, 1);
+    }
+  }
+
+  // Control-point progress ("CP 4/12") under the lap timer; turns green once
+  // the majority is collected (a lap then credits at the finish line).
+  if (SHOW_CHECKPOINT_COUNTER && track && track.gates && track.gates.length) {
+    const ng = lt ? lt.nextGate : 0;
+    const cpStr = "CP " + Math.min(ng, track.gates.length) + "/" + track.gates.length;
+    const cpColor = ng * 2 >= track.gates.length ? rgba(140, 220, 160) : 0xff8899bb;
+    if (fontsOK) {
+      const cw = measureBodyText(fonts, cpStr, 7, 1);
+      drawBodyText(rd, fonts, cpStr, (SCREEN_W - cw) >> 1, y0 + 27, 7, cpColor, 1);
+    } else {
+      drawText(rd, cpStr, (SCREEN_W >> 1) - cpStr.length * 3, y0 + 28, cpColor, 1);
+    }
+  }
+
+  // Mini minimap, top-right — shows every driver, not just this band's own car.
+  if (track) drawSplitMinimap(rd, opts.allPlayers || [{ vehicle: v, color: opts.color }], track, y0);
+
+  // Analog speedometer dial, bottom-right (behind the digital readout, same
+  // half-opaque treatment as the full-screen HUD's drawSpeedo).
+  const kmh = Math.round(Math.abs(v.speedF) * 216);
+  const gaugeCx = SCREEN_W - 8 - SPLIT_GAUGE_R;
+  const gaugeCy = y0 + h - 8 - SPLIT_GAUGE_R;
+  drawSpeedoAt(rd, gaugeCx, gaugeCy, SPLIT_GAUGE_R, kmh, GAUGE_ALPHA);
+
+  // Digital speed, bottom-right.
+  if (fontsOK) {
+    const num = String(kmh);
+    const g0 = fonts.speed["0"];
+    const digitW = g0 ? Math.max(1, Math.round((g0.width * 24) / g0.height)) : 10;
+    const numW = num.length * digitW;
+    drawNumber(rd, fonts.speed, num, SCREEN_W - numW - 8, y0 + h - 30, 24);
+    drawBodyText(rd, fonts, "KMH", SCREEN_W - 36, y0 + h - 12, 8, 0xffb0b0c0, 1);
+  } else {
+    const num = String(kmh);
+    drawText(rd, num, SCREEN_W - num.length * 10 - 8, y0 + h - 26, 0xffffffff, 2);
+    drawText(rd, "KMH", SCREEN_W - 30, y0 + h - 12, 0xffb0b0c0, 1);
+  }
+
+  // Drift charge bar, bottom-left-center.
+  const tc = tierCharges();
+  const maxCharge = tc[tc.length - 1];
+  const pct = Math.min(1, v.charge / maxCharge);
+  const bx = 56, bw = 56, by = y0 + h - 8, bh = 4;
+  drawRect(rd, bx - 1, by - 1, bw + 2, bh + 2, rgba(20, 20, 30), true);
+  if (pct > 0) {
+    const col = v.tier >= 0 ? TIER_COLORS[v.tier] : rgba(120, 130, 150);
+    drawRect(rd, bx, by, (bw * pct) | 0, bh, col, true);
+  }
+  if (v.drifting && v.tier >= 0) {
+    if (fontsOK) drawBodyText(rd, fonts, "DRIFT", bx + 4, by - 9, 8, TIER_COLORS[v.tier], 1);
+    else drawText(rd, "DRIFT", bx + 4, by - 8, TIER_COLORS[v.tier], 1);
+  }
+
+  // Single priority alert at band center.
+  const alert = pickSplitAlert(v, frame);
+  if (alert) {
+    if (fontsOK) {
+      const w = measureBodyText(fonts, alert.text, 16, 1);
+      drawBodyText(rd, fonts, alert.text, (SCREEN_W - w) >> 1, y0 + ((h - 16) >> 1), 16, alert.color, 1);
+    } else {
+      drawText(rd, alert.text, (SCREEN_W >> 1) - alert.text.length * 5, y0 + ((h - 10) >> 1), alert.color, 1);
     }
   }
 }

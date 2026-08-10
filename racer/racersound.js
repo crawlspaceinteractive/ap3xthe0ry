@@ -120,13 +120,19 @@ function ensurePlaying(handle) {
 class RacerSound {
   constructor() {
     this._ready = audio.preload(SFX);
-    this._started = false;
 
-    // Loops
-    this._engine = null;
-    this._screech = null;
-    this._engineRate = 0.6;
-    this._screechVol = 0;
+    // Loops — one pair per player (split-screen), [0] = P1, [1] = P2. In
+    // single-player only slot 0 is created/updated, so the pair stays silent.
+    this._engine = [null, null];
+    this._screech = [null, null];
+    this._engineRate = [0.6, 0.6];
+    this._screechVol = [0, 0];
+
+    // Per-player one-shot edge detection (wall/land/boost/tier).
+    this._evt = [
+      { wall: 0, land: 0, boost: 0, tier: -1 },
+      { wall: 0, land: 0, boost: 0, tier: -1 },
+    ];
 
     // Volume multipliers (0..1). Every SFX volume is scaled by _sfxVol.
     // Defaults are used; autosave.js applySnapshot() will restore saved values.
@@ -138,12 +144,6 @@ class RacerSound {
     // raw preference; the SDK gets preference × fade.
     this._musicFade = 1;
     this._musicFadeTimer = null;
-
-    // Event edge-detection
-    this._prevWallHitT = 0;
-    this._prevLandT = 0;
-    this._prevBoostT = 0;
-    this._prevTier = -1;
 
     // Music playlist
     this._order = shuffle(MUSIC_TRACKS);
@@ -234,13 +234,26 @@ class RacerSound {
     audio.play("select", { volume: this._sfxVol });
   }
 
-  /** Call once, on the first transition into RACE (i.e. after a user gesture). */
-  async startRace() {
-    if (!this._started) {
-      this._started = true;
-      await this._ready;
-      this._engine = audio.play("engine", { loop: true, volume: 0 });
-      this._screech = audio.play("screech", { loop: true, volume: 0 });
+  /** Call on the first transition into RACE (after a user gesture). Idempotent;
+   *  `multi` ensures a second engine/screech pair for P2, or retires a stale
+   *  pair when switching back to single-player. */
+  async startRace(multi) {
+    await this._ready;
+    if (!this._engine[0]) {
+      this._engine[0] = audio.play("engine", { loop: true, volume: 0 });
+      this._screech[0] = audio.play("screech", { loop: true, volume: 0 });
+    }
+    if (multi) {
+      if (!this._engine[1]) {
+        this._engine[1] = audio.play("engine", { loop: true, volume: 0 });
+        this._screech[1] = audio.play("screech", { loop: true, volume: 0 });
+      }
+    } else {
+      if (this._engine[1]) this._engine[1].stop();
+      if (this._screech[1]) this._screech[1].stop();
+      this._engine[1] = null;
+      this._screech[1] = null;
+      this._screechVol[1] = 0;
     }
     if (!this._musicOn) {
       this._musicOn = true;
@@ -265,58 +278,62 @@ class RacerSound {
     this.fadeMusic(1, 400);
   }
 
-  /** Per fixed step (60 Hz) while racing. */
-  update(v, controls) {
+  /** Per fixed step (60 Hz) while racing. `idx` picks the player's loop pair
+   *  and one-shot event state: 0 = P1, 1 = P2 (split-screen). */
+  update(v, controls, idx = 0) {
     const sv = this._sfxVol;
+    const engine = this._engine[idx];
+    const screech = this._screech[idx];
+    const e = this._evt[idx];
 
     // --- Engine: pitch from speed, volume from throttle -----------------
     const spd = Math.min(1, Math.abs(v.speedF) / Math.max(0.01, TUNE.topSpeed));
     const boosting = v.boostT > 0;
     const targetRate = 0.55 + spd * 2.1 + (boosting ? 0.5 : 0);
-    this._engineRate += (targetRate - this._engineRate) * 0.08; // smooth revs
+    this._engineRate[idx] += (targetRate - this._engineRate[idx]) * 0.08; // smooth revs
     const targetVol = v.respawnT > 0
       ? 0
       : (0.10 + spd * 0.16 + (controls && controls.throttle ? 0.08 : 0) + (boosting ? 0.06 : 0)) * sv;
-    if (this._engine) {
-      ensurePlaying(this._engine);
-      setRate(this._engine, this._engineRate);
-      this._engine.setVolume(targetVol);
+    if (engine) {
+      ensurePlaying(engine);
+      setRate(engine, this._engineRate[idx]);
+      engine.setVolume(targetVol);
     }
 
     // --- Tire screech while drifting -------------------------------------
     const screeching = v.drifting && v.grounded && v.respawnT === 0;
     const screechTarget = screeching ? (0.10 + spd * 0.22) * sv : 0;
-    this._screechVol += (screechTarget - this._screechVol) * 0.2;
-    if (this._screech) {
-      ensurePlaying(this._screech);
-      setRate(this._screech, 0.9 + spd * 0.35 + (v.tier + 1) * 0.06);
-      this._screech.setVolume(this._screechVol);
+    this._screechVol[idx] += (screechTarget - this._screechVol[idx]) * 0.2;
+    if (screech) {
+      ensurePlaying(screech);
+      setRate(screech, 0.9 + spd * 0.35 + (v.tier + 1) * 0.06);
+      screech.setVolume(this._screechVol[idx]);
     }
 
-    // --- One-shot events (edge-detected off vehicle timers) --------------
-    if (v.wallHitT > this._prevWallHitT) {
+    // --- One-shot events (edge-detected off this player's vehicle timers) --
+    if (v.wallHitT > e.wall) {
       audio.play("crash", { volume: (0.35 + spd * 0.35) * sv });
     }
-    if (v.landT > this._prevLandT) {
+    if (v.landT > e.land) {
       audio.play("crunch", { volume: (0.25 + spd * 0.3) * sv });
     }
-    if (v.boostT > this._prevBoostT + 1) {
+    if (v.boostT > e.boost + 1) {
       audio.play("boost", { volume: sv });
     }
-    if (v.drifting && v.tier > this._prevTier && v.tier >= 0) {
+    if (v.drifting && v.tier > e.tier && v.tier >= 0) {
       audio.play("tierup", { rate: 1 + v.tier * 0.2, volume: sv });
     }
-    this._prevWallHitT = v.wallHitT;
-    this._prevLandT = v.landT;
-    this._prevBoostT = v.boostT;
-    this._prevTier = v.drifting ? v.tier : -1;
+    e.wall = v.wallHitT;
+    e.land = v.landT;
+    e.boost = v.boostT;
+    e.tier = v.drifting ? v.tier : -1;
   }
 
   /** Silence the loops instantly (pause menu / leaving RACE). */
   duck() {
-    if (this._engine) this._engine.setVolume(0);
-    if (this._screech) this._screech.setVolume(0);
-    this._screechVol = 0;
+    for (const h of this._engine) if (h) h.setVolume(0);
+    for (const h of this._screech) if (h) h.setVolume(0);
+    this._screechVol = [0, 0];
   }
 
   // --- Music playlist ------------------------------------------------------

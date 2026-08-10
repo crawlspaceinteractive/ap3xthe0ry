@@ -1,8 +1,11 @@
 // engine/textureloader.js
 // CPU-side image texture loader/sampler for the software renderer.
 // Engine-only: callers provide fully resolved URLs.
+import { decodeGIF, frameAtTime } from "./gifdecode.js";
+export { frameAtTime };
 
 const _textureCache = new Map();
+const _animCache = new Map();
 
 export async function loadTexture(url, opts = {}) {
   if (!url) return null;
@@ -195,6 +198,43 @@ export function tintTexelRGBA(texel, tint) {
   ) >>> 0;
 }
 
+// Loads a GIF as a real multi-frame animation (all frames + their delays),
+// unlike loadTexture()'s canvas-snapshot approach which only ever captures
+// whichever single frame the <img> happened to land on. Each returned frame
+// is shaped { width, height, data } — a drop-in texture for drawSpriteFit /
+// drawSpriteFit-style blits. Use engine/gifdecode.js's frameAtTime(anim, ms)
+// to pick the frame for the current time.
+// opts.maxSize: nearest-neighbour downsample (see gifdecode.js) — worth
+// setting when the source art is much bigger than its on-screen size.
+export async function loadAnimatedTexture(url, opts = {}) {
+  if (!url) return null;
+  const key = `${url}|anim${opts.maxSize ? "|max" + opts.maxSize : ""}`;
+  if (_animCache.has(key)) return _animCache.get(key);
+
+  const promise = fetchAndDecodeGIF(url, opts).catch(err => {
+    console.warn("[texture] failed to load animated gif", url, err);
+    return null;
+  });
+  _animCache.set(key, promise);
+  return promise;
+}
+
+async function fetchAndDecodeGIF(url, opts) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`GIF fetch failed (${res.status}): ${url}`);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const gif = decodeGIF(bytes, opts);
+  const frames = gif.frames.map(f => ({
+    width: gif.width,
+    height: gif.height,
+    data: f.data,
+    delay: f.delay,
+  }));
+  const totalDelay = frames.reduce((s, f) => s + f.delay, 0);
+  return { url, width: gif.width, height: gif.height, frames, totalDelay, loopCount: gif.loopCount };
+}
+
 export function clearTextureCache() {
   _textureCache.clear();
+  _animCache.clear();
 }
