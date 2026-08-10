@@ -104,6 +104,7 @@ export class MenuController {
     this.gamemodeRow = 0;
     this.courseRow = 0;
     this.selectedLevelIdx = 0;
+    this.gameMode = "TIME ATTACK";  // last confirmed GAMEMODES entry (SINGLE RACE is demo-denied)
     this.noticeMode = null;
     this.optRow = 0;
     this.bindRow = 0;
@@ -248,10 +249,17 @@ export class MenuController {
       const item = GAMEMODE_ITEMS[this.gamemodeRow];
       if (item === "TIME ATTACK") {
         racerSound.menuConfirm();
+        this.gameMode = "TIME ATTACK";
         this.enterCourses(this.selectedLevelIdx);
         return null;
       }
-      // SINGLE RACE / HEAD2HEAD — not in this demo → deny buzz.
+      if (item === "HEAD2HEAD") {
+        racerSound.menuConfirm();
+        this.gameMode = "HEAD2HEAD";
+        this.enterCourses(this.selectedLevelIdx);
+        return null;
+      }
+      // SINGLE RACE — not in this demo → deny buzz.
       racerSound.menuDeny();
       this.noticeMode = item;
       this.mode = "NOTICE";
@@ -432,6 +440,9 @@ export class MenuController {
       this._body(rd, fonts, useSprite, GAMEMODE_ITEMS[i], x, y, 20, s ? SEL : WHITE);
       y += 30;
     }
+    if (this.gamemodeRow === 2) {
+      this._bodyCentered(rd, fonts, useSprite, "P1:PAD1 / KEYBOARD   P2:PAD2", 150, 10, DIM);
+    }
     this._hint(rd, fonts, useSprite, "W/S:SEL  ENTER/SPC:OK  ESC:BACK");
   }
 
@@ -468,7 +479,10 @@ export class MenuController {
       }
     }
 
-    this._hint(rd, fonts, useSprite, "W/S:SEL  ENTER:RACE  ESC:BACK");
+    const hint = this.gameMode === "HEAD2HEAD"
+      ? "W/S:SEL  ENTER:START HEAD2HEAD  ESC:BACK"
+      : "W/S:SEL  ENTER:RACE  ESC:BACK";
+    this._hint(rd, fonts, useSprite, hint);
   }
 
   _drawNotice(rd, fonts, useSprite) {

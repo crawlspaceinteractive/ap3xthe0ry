@@ -124,52 +124,79 @@ class SkyLayers {
    * @param {object} rd   - renderer { buf32, depth, ... }
    * @param {number} yaw  - camera yaw in degrees (may wrap 360° / ±180°)
    * @param {number} pitch - camera pitch in degrees (positive = look up)
+   * @param {object} view - optional split-screen band { y0, h }. The strips
+   *   are vertically compressed to fill the band with the same angular
+   *   coverage as the full screen, and each band keeps its OWN yaw-scroll
+   *   state so the two players' skies never fight over the shared offset.
+   *   Omit for a full-screen sky.
    */
-  blit(rd, yaw, pitch) {
+  blit(rd, yaw, pitch, view) {
     if (!this._ready) return;
 
     const { buf32 } = rd;
+    const s = view && view.h ? view.h / SCREEN_H : 1;
+    const bandTop = view && view.y0 ? view.y0 : 0;
+    const bandH = SCREEN_H * s;
+
+    // Per-view scroll state: split-screen bands accumulate yaw deltas on
+    // their own object so each player's sky scrolls independently.
+    let st;
+    if (view) {
+      if (!view.__skyState) view.__skyState = { _lastYaw: null, _offsets: [] };
+      st = view.__skyState;
+    } else {
+      st = this;
+    }
+    if (st._offsets.length !== this._layers.length) {
+      st._offsets = this._layers.map(() => 0);
+    }
 
     // Accumulate the smallest signed angular change; handles yaw wrapping
     // (359°→0°, and atan2's +180°→-180°) without flipping the sky.
     let delta = 0;
-    if (this._lastYaw !== null) {
-      delta = yaw - this._lastYaw;
+    if (st._lastYaw !== null) {
+      delta = yaw - st._lastYaw;
       while (delta > 180) delta -= 360;
       while (delta < -180) delta += 360;
     }
-    this._lastYaw = yaw;
+    st._lastYaw = yaw;
 
-    // Horizon row: base at screen midpoint, shifted down by pitch.
-    // FOCAL_Y ≈ 143 → ~2.5 px per degree of pitch at 320×240 (5.0 at 640×480
-    // output). Clamp keeps the horizon between ~20% and ~25% below screen
-    // center (same relative band as the old 320×200 render).
-    const horizon = Math.max(
-      (HALF_H - SCREEN_H * 0.20) | 0,
-      Math.min((HALF_H + SCREEN_H * 0.25) | 0, (HALF_H + pitch * (FOCAL_Y * Math.PI / 180)) | 0)
-    );
+    // Horizon row: band center shifted by pitch, scaled with the band height.
+    // Full screen: base at HALF_H, clamped to the same [30%, 75%] band the
+    // old renderer used (FOCAL_Y ≈ 143 → ~2.5 px per degree of pitch at
+    // 320×240, ~5.0 at 640×480 output).
+    const base = bandTop + HALF_H * s;
+    const lo = bandTop + bandH * 0.30;
+    const hi = bandTop + bandH * 0.75;
+    const horizon = Math.max(lo, Math.min(hi, base + pitch * (FOCAL_Y * Math.PI / 180) * s)) | 0;
+
+    // vScale: strip rows are sampled every 1/s rows so the pre-scaled
+    // full-height strips compress into the band at the same angular scale.
+    const vScale = 1 / s;
 
     for (let i = 0; i < this._layers.length; i++) {
       const layer = this._layers[i];
       const { data, w, h, parallax } = layer;
-      const stripTop = horizon - h;
+      const hEff = Math.max(1, (h * s) | 0);
+      const stripTop = horizon - hEff;
 
-      // Skip if the entire strip is off-screen
-      if (stripTop >= SCREEN_H || stripTop + h <= 0) continue;
+      // Skip if the entire strip is off the band
+      if (stripTop >= bandTop + bandH || stripTop + hEff <= bandTop) continue;
 
       // Continuous scroll: accumulate per-degree motion; xoff never jumps
       // even when the incoming yaw wraps.
-      this._offsets[i] += delta * PX_PER_DEG * parallax;
-      const xoff = ((Math.round(this._offsets[i]) % w) + w) % w;
+      st._offsets[i] += delta * PX_PER_DEG * parallax;
+      const xoff = ((Math.round(st._offsets[i]) % w) + w) % w;
 
-      // Clamp draw range to visible screen area
-      const yStart = Math.max(0, stripTop);
-      const yEnd = Math.min(SCREEN_H, stripTop + h);
+      // Clamp draw range to the visible band
+      const yStart = Math.max(bandTop, stripTop);
+      const yEnd = Math.min(bandTop + bandH, stripTop + hEff);
 
       for (let y = yStart; y < yEnd; y++) {
         const row = y * SCREEN_W;
-        // v: 0 at strip top → 1 at strip bottom
-        const v = y - stripTop;
+        // v: 0 at strip top → h-1 at strip bottom (compressed into the band)
+        let v = ((y - stripTop) * vScale) | 0;
+        if (v >= h) v = h - 1;
 
         for (let sx = 0; sx < SCREEN_W; sx++) {
           const u = ((sx + xoff) % w + w) % w;

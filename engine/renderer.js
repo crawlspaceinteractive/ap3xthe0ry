@@ -136,7 +136,7 @@ export function createRenderer(canvas) {
     const b32 = new Uint32Array(img.data.buffer);
     return { image: img, buf32: b32 };
   })();
-  return { ctx, image, buf32, depth, skyRows, canvas, display };
+  return { ctx, image, buf32, depth, skyRows, canvas, display, viewY0: 0, viewY1: SCREEN_H - 1 };
 }
 
 function lerpColor(a, b, t) {
@@ -165,10 +165,14 @@ const CHECKER_A   = rgba(244, 244, 248);
 const CHECKER_B   = rgba(18,  20,  26);
 
 // Clear framebuffer with the checkered flag pattern + depth reset.
-export function clearSky(rd, cameraYaw, frame) {
+// The optional band (y0..y0+bandH) restricts the clear to one horizontal
+// strip of the framebuffer — used by split-screen so each player's half is
+// cleared with their own camera yaw. Full screen when omitted.
+export function clearSky(rd, cameraYaw, frame, y0 = 0, bandH = SCREEN_H) {
   const { buf32, depth } = rd;
   const yawShift = (cameraYaw * 11) | 0; // glides with yaw → menu animation
-  for (let y = 0; y < SCREEN_H; y++) {
+  const yEnd = y0 + bandH;
+  for (let y = y0; y < yEnd; y++) {
     const row = y * SCREEN_W;
     const cy = (y / CHECKER_CELL) | 0;
     const evenRow = (cy & 1) === 0;
@@ -207,13 +211,20 @@ function toCameraSpace(world, camera) {
 
 // ---- Project an already-in-camera-space point to screen --------------------
 // Screen coords are integer-snapped (|0) here — this is where vertex jitter lives.
+// View-slice split-screen: the camera may carry sliceY0 + sliceVScale so a
+// full-FOV frame is squeezed into a horizontal band of the framebuffer. With
+// sliceVScale = 1 and sliceY0 = 0 (defaults) this is the plain full-screen
+// projection. The slice rides ON the camera so every builder that already
+// threads the camera picks the split up for free.
 function projectCS(cs, camera) {
   if (cs.cz < NEAR_Z) return { sx: 0, sy: 0, cz: cs.cz, visible: false };
   const fovMul = camera.fovMul || 1.0;
   const scaleX = scaleAtX(cs.cz) * fovMul;
   const scaleY = scaleAtY(cs.cz) * fovMul;
   const sx = (HALF_W + cs.cx * scaleX) | 0;
-  const sy = (HALF_H - cs.cy * scaleY) | 0;
+  const sliceY0 = camera.sliceY0 || 0;
+  const sliceVS = camera.sliceVScale || 1;
+  const sy = sliceY0 + ((HALF_H - cs.cy * scaleY) / sliceVS) | 0;
   return { sx, sy, cz: cs.cz, visible: true };
 }
 
@@ -321,6 +332,8 @@ function getShadedColor(color, avgZ) {
 export function drawTriangle(rd, v0, v1, v2, color) {
   if (!v0.visible || !v1.visible || !v2.visible) return;
   const toSky = _fogToSky;
+  const viewY0 = rd.viewY0 || 0;
+  const viewY1 = rd.viewY1 ?? (SCREEN_H - 1);
 
   // Integer screen coords (already snapped from projectCS)
   const x1 = v0.sx | 0, y1 = v0.sy | 0;
@@ -332,7 +345,7 @@ export function drawTriangle(rd, v0, v1, v2, color) {
   const maxX = x1 > x2 ? (x1 > x3 ? x1 : x3) : (x2 > x3 ? x2 : x3);
   const minY = y1 < y2 ? (y1 < y3 ? y1 : y3) : (y2 < y3 ? y2 : y3);
   const maxY = y1 > y2 ? (y1 > y3 ? y1 : y3) : (y2 > y3 ? y2 : y3);
-  if (maxX < 0 || minX >= SCREEN_W || maxY < 0 || minY >= SCREEN_H) return;
+  if (maxX < 0 || minX >= SCREEN_W || maxY < viewY0 || minY > viewY1) return;
 
   // Degeneracy check: area = (x1-x3)*(y2-y1) - (x1-x2)*(y3-y1)
   const area = (x1 - x3) * (y2 - y1) - (x1 - x2) * (y3 - y1);
@@ -356,11 +369,11 @@ export function drawTriangle(rd, v0, v1, v2, color) {
   const dzdx = dy23 * zF0 + dy31 * zF1 + dy12 * zF2;
   const dzdy = -dx23 * zF0 - dx31 * zF1 - dx12 * zF2;
 
-  // Clip to screen
+  // Clip to screen (and the active viewport y-band for split-screen)
   const x0c = minX < 0 ? 0 : minX;
   const xec = maxX >= SCREEN_W ? SCREEN_W - 1 : maxX;
-  const y0c = minY < 0 ? 0 : minY;
-  const yec = maxY >= SCREEN_H ? SCREEN_H - 1 : maxY;
+  const y0c = minY < viewY0 ? viewY0 : minY;
+  const yec = maxY > viewY1 ? viewY1 : maxY;
 
   const { buf32, depth, skyRows } = rd;
 
@@ -844,6 +857,8 @@ export function drawTexturedTriangle(rd, v0, v1, v2, color, texture, opts = {}) 
   if (!texture) return drawTriangle(rd, v0, v1, v2, color);
   if (!v0.visible || !v1.visible || !v2.visible) return;
   const toSky = _fogToSky;
+  const viewY0 = rd.viewY0 || 0;
+  const viewY1 = rd.viewY1 ?? (SCREEN_H - 1);
   const additive = !!opts.additive;
   const alphaCut = opts.alphaCut ?? 128;
   const depthBias = opts.depthBias || 0;
@@ -858,7 +873,7 @@ export function drawTexturedTriangle(rd, v0, v1, v2, color, texture, opts = {}) 
   const maxX = x1 > x2 ? (x1 > x3 ? x1 : x3) : (x2 > x3 ? x2 : x3);
   const minY = y1 < y2 ? (y1 < y3 ? y1 : y3) : (y2 < y3 ? y2 : y3);
   const maxY = y1 > y2 ? (y1 > y3 ? y1 : y3) : (y2 > y3 ? y2 : y3);
-  if (maxX < 0 || minX >= SCREEN_W || maxY < 0 || minY >= SCREEN_H) return;
+  if (maxX < 0 || minX >= SCREEN_W || maxY < viewY0 || minY > viewY1) return;
 
   const area = (x1 - x3) * (y2 - y1) - (x1 - x2) * (y3 - y1);
   if (area === 0) return;
@@ -881,8 +896,8 @@ export function drawTexturedTriangle(rd, v0, v1, v2, color, texture, opts = {}) 
 
   const x0c = minX < 0 ? 0 : minX;
   const xec = maxX >= SCREEN_W ? SCREEN_W - 1 : maxX;
-  const y0c = minY < 0 ? 0 : minY;
-  const yec = maxY >= SCREEN_H ? SCREEN_H - 1 : maxY;
+  const y0c = minY < viewY0 ? viewY0 : minY;
+  const yec = maxY > viewY1 ? viewY1 : maxY;
 
   const { buf32, depth, skyRows } = rd;
 
@@ -996,9 +1011,11 @@ export function drawPixelW(rd, world, camera, color, size = 1) {
   const ra = color >>> 24;
   const tinted = (ra << 24) | (rb << 16) | (rg << 8) | rr;
   const { buf32, depth } = rd;
+  const viewY0 = rd.viewY0 || 0;
+  const viewY1 = rd.viewY1 ?? (SCREEN_H - 1);
   for (let dy = -size; dy <= size; dy++) {
     const y = (p.sy + dy) | 0;
-    if (y < 0 || y >= SCREEN_H) continue;
+    if (y < viewY0 || y > viewY1) continue;
     const row = y * SCREEN_W;
     for (let dx = -size; dx <= size; dx++) {
       const x = (p.sx + dx) | 0;
@@ -1025,7 +1042,10 @@ export function drawBillboardSprite(rd, tex, world, camera, opts = {}) {
   const fovMul = camera.fovMul || 1;
   const size = opts.worldSize ?? 1;
   const sx = (size * scaleAtX(z) * fovMul) | 0;
-  const sy = ((opts.height ?? size) * scaleAtY(z) * fovMul) | 0;
+  // Vertical footprint scales down with the view slice (split-screen), so a
+  // world-height h keeps the same angular size inside a squeezed half.
+  const sliceVS = camera.sliceVScale || 1;
+  const sy = ((opts.height ?? size) * scaleAtY(z) * fovMul / sliceVS) | 0;
   if (sx < 1 || sy < 1) return;
 
   const cols = opts.cols || 1;
@@ -1036,15 +1056,18 @@ export function drawBillboardSprite(rd, tex, world, camera, opts = {}) {
   const u0 = fxc / cols, u1 = (fxc + 1) / cols;
   const v0 = fyc / rows, v1 = (fyc + 1) / rows;
 
+  const viewY0 = rd.viewY0 || 0;
+  const viewY1 = rd.viewY1 ?? (SCREEN_H - 1);
+
   const cx0 = p.sx - (sx >> 1);
   const cy0 = p.sy - (sy >> 1);
   const x0 = cx0 < 0 ? 0 : cx0;
-  const y0 = cy0 < 0 ? 0 : cy0;
+  const y0 = cy0 < viewY0 ? viewY0 : cy0;
   const x1 = cx0 + sx - 1;
   const y1 = cy0 + sy - 1;
-  if (x0 >= SCREEN_W || y0 >= SCREEN_H || x1 < 0 || y1 < 0) return;
+  if (x0 >= SCREEN_W || y0 > viewY1 || x1 < 0 || y1 < viewY0) return;
   const xi = x1 < SCREEN_W ? x1 : SCREEN_W - 1;
-  const yi = y1 < SCREEN_H ? y1 : SCREEN_H - 1;
+  const yi = y1 > viewY1 ? viewY1 : y1;
 
   const tint = opts.tint ?? 0xffffffff;
   const tr = tint & 0xff, tg = (tint >>> 8) & 0xff, tb = (tint >>> 16) & 0xff;
@@ -1125,20 +1148,23 @@ export function drawBillboardSprite(rd, tex, world, camera, opts = {}) {
 // PS1 15-bit quantization with a Bayer threshold keyed on the OUTPUT (x, y)
 // coordinates — so the dither pattern is generated on the 640×480 grid and
 // each 320×240 pixel becomes a chunky 2×2 dithered block (very PS1).
-export function present(rd, warpAmount = 0, fadeAmount = 0) {
+export function present(rd, warpAmount = 0, fadeAmount = 0, fadeBottom = fadeAmount) {
   const { buf32, display } = rd;
-  if (warpAmount > 0.5 || fadeAmount > 0) {
+  if (warpAmount > 0.5 || fadeAmount > 0 || fadeBottom > 0) {
     const src = new Uint32Array(buf32);
     const fadeC = rgba(0, 0, 0);
     for (let y = 0; y < SCREEN_H; y++) {
       const phase = Math.sin((y / SCREEN_H) * Math.PI * 4 + warpAmount * 0.1);
       const shift = (phase * warpAmount) | 0;
       const row = y * SCREEN_W;
+      // Split-screen: the top band fades with fadeAmount, the bottom with
+      // fadeBottom (each player's own respawn flash).
+      const f = y < HALF_H ? fadeAmount : fadeBottom;
       for (let x = 0; x < SCREEN_W; x++) {
         let sx = x + shift;
         if (sx < 0) sx = 0; else if (sx >= SCREEN_W) sx = SCREEN_W - 1;
         let c = src[row + sx];
-        if (fadeAmount > 0) c = tint(c, fadeC, fadeAmount * 0.85);
+        if (f > 0) c = tint(c, fadeC, f * 0.85);
         buf32[row + x] = c;
       }
     }
@@ -1185,6 +1211,8 @@ const FONT = {
 export function drawText(rd, text, x, y, color = 0xffffffff, scale = 1) {
   text = String(text).toUpperCase();
   const { buf32 } = rd;
+  const viewY0 = rd.viewY0 || 0;
+  const viewY1 = rd.viewY1 ?? (SCREEN_H - 1);
   let cx = x | 0;
   for (let i = 0; i < text.length; i++) {
     const glyph = FONT[text[i]] ?? 0;
@@ -1197,7 +1225,7 @@ export function drawText(rd, text, x, y, color = 0xffffffff, scale = 1) {
           for (let px = 0; px < scale; px++) {
             const xx = cx + gx * scale + px;
             const yy = y + gy * scale + py;
-            if (xx < 0 || xx >= SCREEN_W || yy < 0 || yy >= SCREEN_H) continue;
+            if (xx < 0 || xx >= SCREEN_W || yy < viewY0 || yy > viewY1) continue;
             buf32[yy * SCREEN_W + xx] = color;
           }
         }
@@ -1223,10 +1251,12 @@ function blendAt(rd, i, color, alpha) {
 
 export function drawRect(rd, x, y, w, h, color, fill = true, alpha) {
   const { buf32 } = rd;
+  const viewY0 = rd.viewY0 || 0;
+  const viewY1 = rd.viewY1 ?? (SCREEN_H - 1);
   const x0 = (x < 0 ? 0 : x) | 0;
-  const y0 = (y < 0 ? 0 : y) | 0;
+  const y0 = (y < viewY0 ? viewY0 : y) | 0;
   const x1 = (x + w > SCREEN_W ? SCREEN_W : x + w) | 0;
-  const y1 = (y + h > SCREEN_H ? SCREEN_H : y + h) | 0;
+  const y1 = (y + h > viewY1 + 1 ? viewY1 + 1 : y + h) | 0;
   if (fill) {
     if (alpha === undefined) {
       for (let yy = y0; yy < y1; yy++) {
@@ -1273,8 +1303,10 @@ export function drawLine(rd, x0, y0, x1, y1, color, alpha) {
   const dy = -Math.abs(Y1 - Y0);
   const sy = Y0 < Y1 ? 1 : -1;
   let err = dx + dy;
+  const viewY0 = rd.viewY0 || 0;
+  const viewY1 = rd.viewY1 ?? (SCREEN_H - 1);
   for (;;) {
-    if (X0 >= 0 && X0 < SCREEN_W && Y0 >= 0 && Y0 < SCREEN_H) {
+    if (X0 >= 0 && X0 < SCREEN_W && Y0 >= viewY0 && Y0 <= viewY1) {
       const i = Y0 * SCREEN_W + X0;
       if (alpha === undefined) buf32[i] = color;
       else blendAt(rd, i, color, alpha);
@@ -1301,10 +1333,12 @@ export function drawThickLine(rd, x0, y0, x1, y1, color, thick = 1, alpha) {
 export function drawCircle(rd, cx, cy, r, color, fill = false, alpha) {
   const { buf32 } = rd;
   const Cx = cx | 0, Cy = cy | 0, R = r | 0;
+  const viewY0 = rd.viewY0 || 0;
+  const viewY1 = rd.viewY1 ?? (SCREEN_H - 1);
   if (fill) {
     for (let y = -R; y <= R; y++) {
       const yy = Cy + y;
-      if (yy < 0 || yy >= SCREEN_H) continue;
+      if (yy < viewY0 || yy > viewY1) continue;
       const row = yy * SCREEN_W;
       const w = Math.sqrt(R * R - y * y) | 0;
       for (let x = -w; x <= w; x++) {
@@ -1320,7 +1354,7 @@ export function drawCircle(rd, cx, cy, r, color, fill = false, alpha) {
   let x = 0, y = R;
   let d = 1 - R;
   const put = (px, py) => {
-    if (px >= 0 && px < SCREEN_W && py >= 0 && py < SCREEN_H) {
+    if (px >= 0 && px < SCREEN_W && py >= viewY0 && py <= viewY1) {
       const i = py * SCREEN_W + px;
       if (alpha === undefined) buf32[i] = color;
       else blendAt(rd, i, color, alpha);

@@ -2,8 +2,8 @@
  * racer/intro.js — Cold open: dev + platform cinematic that plays BEFORE the
  * boot warning screen.
  *
- * Flow: cinematic reel (dev logo smash → BUILT WITH ★ STAR) → reveal game
- * menu underneath.
+ * Flow: cinematic reel (dev logo smash → BUILT WITH ★ STAR → team logo card)
+ * → reveal game menu underneath.
  *
  * The reel is an array of cinematics (`CINEMATICS`). Each receives a shared
  * { stage, audio, sleep, fadeOut, shake, mkImg } context and runs full-screen
@@ -18,6 +18,8 @@
  *   LIGHTRAY  the headlight beam sprite (assets/2D/sprites/fx/lightray.png)
  *   DEVLOGO   studio/dev logo (assets/2D/ui/intro/devLOGO.png)
  *   STARLOGO  platform logo (assets/2D/ui/intro/StarLogoWithTransparentBg512x512.png)
+ *   TEAMLOGO  team/studio logo card, plays right after the platform beat
+ *             (assets/2D/ui/intro/TeamLogo.png)
  *   BIGFONT   in-game title letters (assets/2D/ui/fonts/bigfont/A_.png…Z_.png);
  *             the "BUILT WITH" / "STAR" words are rendered from these sprites
  *             with the same advance metrics as racer/hudfont.js drawBigText.
@@ -27,6 +29,7 @@ import { assetUrl } from "../engine/asseturls.js";
 const LIGHTRAY_URL = assetUrl("assets/2D/sprites/fx/lightray.png");
 const DEVLOGO_URL  = assetUrl("assets/2D/ui/intro/devLOGO.png");
 const STARLOGO_URL = assetUrl("assets/2D/ui/intro/StarLogoWithTransparentBg512x512.png");
+const TEAMLOGO_URL = assetUrl("assets/2D/ui/intro/TeamLogo.png");
 
 // The crash impact buffer (same def racerSound preloads). Preloaded here too
 // (idempotent — sdk-audio caches by id) so the intro can AWAIT its readiness
@@ -173,7 +176,7 @@ export function runIntro({ root, audio, onReveal }) {
   });
 
   // warm the cinematic art cache (no loading bar — by design)
-  for (const u of [LIGHTRAY_URL, DEVLOGO_URL, STARLOGO_URL]) { const im = new Image(); im.src = u; }
+  for (const u of [LIGHTRAY_URL, DEVLOGO_URL, STARLOGO_URL, TEAMLOGO_URL]) { const im = new Image(); im.src = u; }
 
   // Kick the crash preload (idempotent with racerSound's warmup preload, same
   // id) and hold its promise so the impact below can await true readiness.
@@ -307,8 +310,29 @@ export function runIntro({ root, audio, onReveal }) {
     await fadeOut(stage, 600); // to black
   }
 
+  // ---------- cinematic 3: TEAM — team/studio logo card ----------
+  // Plays right after the platform card (BUILT WITH ★ STAR) as its own extra
+  // beat, same fade-in/hold/fade-out shape as platformCinematic.
+  async function teamCinematic({ stage, sleep, fadeOut }) {
+    // TeamLogo.png is authored at 640x480 — the same internal resolution as
+    // the game framebuffer (main.js's #froyo-canvas, which fills its shell at
+    // width:100%;height:100%). Match that exact sizing here instead of an
+    // independent vmin box, so the card stretches identically to how the
+    // canvas itself fills the screen (pixel-perfect at 4:3, same non-uniform
+    // stretch as the game at any other window aspect).
+    stage.innerHTML = `
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
+        <img id="tc-logo" src="${TEAMLOGO_URL}" draggable="false" style="width:100%;height:100%;opacity:0;transition:opacity .7s ease">
+      </div>`;
+    const logo = stage.querySelector('#tc-logo');
+    await sleep(300);
+    logo.style.opacity = '1';
+    await sleep(1600); // hold
+    await fadeOut(stage, 600); // to black
+  }
+
   // add future cinematics here — they run in order, back to back
-  const CINEMATICS = [devCinematic, platformCinematic];
+  const CINEMATICS = [devCinematic, platformCinematic, teamCinematic];
 
   // ---------- run the reel ----------
   (async () => {

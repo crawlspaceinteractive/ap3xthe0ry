@@ -34,6 +34,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const canvas = document.getElementById("froyo-canvas");
 
   const game = new RacerGame(canvas);
+  window.__game = game; // debug/test hook: reach the running game from devtools
 
   // Preload the racer's assets (car GLB, textures, fonts, sfx) while the
   // splash + dev/platform cinematics play on the DOM overlay, so the reveal

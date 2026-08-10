@@ -517,15 +517,32 @@ Purpose: full history of changes & fixes so regressions can be traced.
    `node --check`, `tools/ribbon-smoke.js`, and downhill simulations on
    hill-test/bank-test at multiple speeds.
 
-- CHANGE (menu feedback, unreleased): menu confirm/deny SFX. Two new sounds,
-   `assets/audio/sounds/sfx_menu_confirm.mp3` (wired via
-   `racerSound.menuConfirm()`) and `sfx_menu_deny.mp3` (`racerSound.menuDeny()`),
-   fire on every menu edge across the game: MAIN item select, GAMEMODES
-   (TIME ATTACK confirm; SINGLE RACE / HEAD2HEAD are unavailable so they buzz
-   deny and drop into the NOTICE card), COURSES (confirm starts the race, back
-   returns to PLAY), NOTICE + CONTROLS dismiss, OPTIONS (fullscreen toggle,
-   key-bindings, BACK) and its PAUSE twin (RESUME, fullscreen, bindings, QUIT),
-   BINDINGS (successful key capture blips confirm; pressing ESC during capture
-   cancels with deny; back returns to the calling menu), and ABOUT (confirm/
-   back dismiss). Slider adjusts and row navigation stay silent — only
-   confirm/cancel decisions beep.
+- CHANGE (menu feedback, unreleased): menu confirm/deny/select SFX. Three new
+   sounds — `assets/audio/sounds/sfx_menu_confirm.mp3` (via
+   `racerSound.menuConfirm()`), `sfx_menu_deny.mp3` (`racerSound.menuDeny()`),
+   and `sfx_menu_select.mp3` (`racerSound.menuSelect()`). Row navigation ticks
+   the light select blip on row-change edges only (wrapping included; slider
+   adjusts and non-navigating presses stay silent); confirm/cancel decisions
+   beep. Wired across every menu: MAIN item select, GAMEMODES (TIME ATTACK
+   confirm; SINGLE RACE / HEAD2HEAD are unavailable so they buzz deny and drop
+   into the NOTICE card), COURSES (confirm starts the race, back returns to
+   PLAY), NOTICE + CONTROLS dismiss, OPTIONS (fullscreen toggle, key-bindings,
+   BACK) and its PAUSE twin (RESUME, fullscreen, bindings, QUIT), BINDINGS
+   (successful key capture blips confirm; pressing ESC during capture cancels
+   with deny; back returns to the calling menu), and ABOUT (confirm/back
+   dismiss).
+
+- CHANGE (roadmap, unreleased): development priority shift + roadmap refresh.
+   Phase 2 2.1 Spline-Based Track Generator marked complete; 2.2 Environment &
+   Biome Decor notes updated to what's actually built (walls, destructible tire
+   stacks, pine billboards, fuji sky — cones/signs/start-finish/streetlamps
+   still missing); 2.3 hazards deferred with Phase 4 removed by design (no
+   kart-style power-ups; boost comes from drift tiers, ramps, and flips). New
+   system 2.4 "Track Environment via Island-Gen Builders" records the locked
+   island-gen repurpose (block builders + Voronoi-ring placement around the
+   track bounds, collidable AABB push-out, GLB island/mountain rocks, per-biome
+   token grass/desert/city_day/city_night/volcano with placeholder floor
+   textures) but is DEFERRED: head2head/splitscreen (Phase 5 5.2) is the new
+   priority, now marked in-progress. phases.json no longer lists the removed
+   phase4.json. Spline-editor + level-JSON biome tokens land with the 2.4
+   build.
