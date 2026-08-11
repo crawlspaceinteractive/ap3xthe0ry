@@ -11,7 +11,7 @@ import {
   drawTriangle, drawTexturedTriangle, drawPixelW, drawBillboardSprite,
   buildTexturedFace, project, rgba, drawRect, drawText,
 } from "../engine/renderer.js";
-import { sinDeg, cosDeg, scaleAtX, HALF_W, SCREEN_W, SCREEN_H, HALF_H } from "../engine/luts.js";
+import { sinDeg, cosDeg, scaleAtX, scaleAtY, HALF_W, SCREEN_W, SCREEN_H, HALF_H } from "../engine/luts.js";
 import { InputController, BTN_FLAGS } from "../engine/input.js";
 import { loadTexture, loadAnimatedTexture, frameAtTime } from "../engine/textureloader.js";
 import { drawSpriteFit } from "../engine/spritesheet.js";
@@ -28,7 +28,7 @@ import { drawRacerHUD } from "./racerhud.js";
 import { TitleIntro } from "./titleintro.js";
 import { MenuController } from "./menus.js";
 import { drawLoadingBar } from "./loading.js";
-import { loadHudFonts, drawBigText, measureBigText } from "./hudfont.js";
+import { loadHudFonts, drawBigText, measureBigText, drawBodyText, measureBodyText } from "./hudfont.js";
 import { createLapTimer, stepLapTimer, resetLapTimer, unarmLapTimer } from "./laptimer.js";
 import { racerSound } from "./racersound.js";
 import { createSkyLayers } from "./sky.js";
@@ -60,10 +60,26 @@ const LOADING_T = 180;
 const RACE_LOADING_T = 90;
 // How long the autosave icon stays on screen after a save call (60Hz frames).
 const AUTOSAVE_FLASH_FRAMES = 90;
+// Pre-menu crawlcard screen: the crawlcard save-device model
+// (assets/3D/models/crawlcard.glb) spins on a black background with the
+// autosave explanation beneath it. Plays between PRESS START and the intro's
+// loading bar, so the notice lands before the menu loop starts. HOLD is 60Hz
+// frames before it auto-advances (skipping is disabled).
+const CRAWLCARD_HOLD = 300;
+const CRAWLCARD_CAM_Z = 4.6;         // straight-on camera distance
+const CRAWLCARD_SCALE = 0.57;        // render scale on top of prepareVehicleMesh fit (~1/3 of original)
+const CRAWLCARD_Y = 66;              // model center row (320x240 frame)
+const CRAWLCARD_SPIN = 1.2;          // degrees per 60Hz frame (full spin ~5s)
+const CRAWLCARD_MSG = "When this icon displays, the game saves. Please do not turn off or unplug the cabinet while this is on screen.";
+// Flat-lighting direction for the spinning card (normalized 0.45/0.80/0.30,
+// same rig the vehicle mesh uses so the card reads lit from the upper right).
+const CARD_LX = 0.466, CARD_LY = 0.828, CARD_LZ = 0.311;
 
 // Flat backdrop behind the MAIN/GAMEMODES/COURSES/etc. menu screens — the 3D
 // orbiting track scene used to render back there; now it's just this.
 const MENU_BG = rgba(9, 8, 15);
+
+const WHITE = rgba(255, 255, 255);
 
 const SMOKE_COLORS = [rgba(200, 200, 205), rgba(80, 165, 255), rgba(255, 150, 50), rgba(200, 90, 255)];
 const BOOST_COLORS = [rgba(255, 200, 80), rgba(255, 120, 40), rgba(255, 240, 180)];
@@ -107,7 +123,7 @@ export class RacerGame {
     this.input = new InputController();
     this._padSrcP1 = null;         // cached per-frame gamepad slots (see _updatePadSources)
     this._padSrcP2 = -1;
-    this.state = "INTRO";           // warning card → title cinematic → load bar
+    this.state = "INTRO";           // warning card → title cinematic → crawlcard → load bar
     this.intro = new TitleIntro();
     this.menu = new MenuController();
     this.menu.onPersist = () => {
@@ -136,6 +152,8 @@ export class RacerGame {
     this.scenery = createScenery();
     this.hudFonts = null;      // sprite numeral fonts (racer/hudfont.js)
     this.autosaveIconAnim = null; // assets/2D/ui/autosave_icon.gif -- all frames + delays (engine/gifdecode.js)
+    this.crawlcardMesh = null;   // prepared tris for assets/3D/models/crawlcard.glb (pre-menu screen)
+    this._crawlcardT = 0;        // 60Hz frames spent on the pre-menu crawlcard screen
     this._autosaveFlashT = 0;  // frames left to show the autosave icon
     this._autosaveAnimStart = 0; // this.frame value when the flash last started -- gif always replays from its own frame 0
     this._acc = 0;
@@ -198,7 +216,7 @@ export class RacerGame {
     this.menu.courseRow = this.levelIdx;
     this._previewIdx = this.levelIdx;
 
-    const [road, grass, meshData, hudFonts, flare, ray, smoke, autosaveIconAnim] = await Promise.all([
+    const [road, grass, meshData, hudFonts, flare, ray, smoke, autosaveIconAnim, crawlcardMeshData] = await Promise.all([
       loadTexture(assetUrl("assets/2D/textures/base/rock.png"), { wrap: true }),
       loadTexture(assetUrl("assets/2D/textures/base/grass.png"), { wrap: true }),
       // applyNodeTransforms: respect rotations the creator bakes into the
@@ -210,6 +228,10 @@ export class RacerGame {
       loadTexture(assetUrl("assets/2D/sprites/fx/smoke_anim.png"), { wrap: false }),
       // All frames + delays, so the HUD toast icon actually plays.
       loadAnimatedTexture(assetUrl("assets/2D/ui/autosave_icon.gif")),
+      // The 3D save-device model for the pre-menu crawlcard screen. Its scene
+      // nodes carry the authored translations (screen/grip/chip pieces), so
+      // applyNodeTransforms is required to assemble the device correctly.
+      loadGLBMeshIfAvailable(assetUrl("assets/3D/models/crawlcard.glb"), "crawlcard", false, { applyNodeTransforms: true }),
     ]);
     this.tex.road = road;
     this.tex.grass = grass;
@@ -217,6 +239,18 @@ export class RacerGame {
     this.hudFonts = hudFonts;
     this.fx = { flare, ray, smoke };
     this.autosaveIconAnim = autosaveIconAnim;
+    // Center the card on its own vertical midpoint too (prepareVehicleMesh
+    // only centers XZ / rests the base on Y=0) so the spinner can place the
+    // model's visual center exactly where the layout wants it.
+    this.crawlcardMesh = prepareVehicleMesh(crawlcardMeshData);
+    if (this.crawlcardMesh && this.crawlcardMesh.tris) {
+      let minY = Infinity, maxY = -Infinity;
+      for (const t of this.crawlcardMesh.tris) {
+        minY = Math.min(minY, t.ay, t.by, t.cy);
+        maxY = Math.max(maxY, t.ay, t.by, t.cy);
+      }
+      this.crawlcardMesh.centerY = (minY + maxY) * 0.5;
+    }
     // Scenery texture + sky layers load in parallel (non-blocking); trees
     // for the first level are placed once the pine texture is in.
     await this.scenery.load();
@@ -401,9 +435,23 @@ export class RacerGame {
         if (this.intro.pressStart() === "start") racerSound.rev();
       }
       if (this.intro.finished) {
+        // Title intro done (loading bar filled) — the menu loop starts.
         this.state = "MENU";
         this.menu.reset();
         racerSound.playMenuMusic();
+      } else if (this.intro.phase === "CRAWL") {
+        // PRESS START accepted — the pre-menu crawlcard screen (spinning save
+        // device + autosave notice) plays before the intro's loading bar, then
+        // beginLoad() resumes the LOAD phase → MENU.
+        this.state = "CRAWLCARD";
+        this._crawlcardT = 0;
+      }
+    } else if (this.state === "CRAWLCARD") {
+      // Auto-advance after the hold; no skipping (the notice must be read).
+      // Resume the title intro's LOAD phase so the loading bar fills → MENU.
+      if (this._crawlcardT >= CRAWLCARD_HOLD) {
+        this.intro.beginLoad();
+        this.state = "INTRO";
       }
     } else if (this.state === "MENU") {
       const play = this.menu.tick(this.input) === "PLAY";
@@ -473,6 +521,7 @@ export class RacerGame {
       this.frame++;
       if (this.state === "RACE") this._step();
       else if (this.state === "INTRO") this.intro.step(this._assetsReady);
+      else if (this.state === "CRAWLCARD") this._crawlcardT++;
       else if (this.state === "MENU") this._titleAngle += 0.15;
       else if (this.state === "LOADING") {
         this._loadingT++;
@@ -758,6 +807,15 @@ export class RacerGame {
       return;
     }
 
+    // Pre-menu crawlcard screen: the save-device model spins on black with the
+    // autosave notice below it — one 3D mesh on a 2D backdrop, then the intro
+    // resumes its LOAD phase (loading bar) and drops into MENU.
+    if (this.state === "CRAWLCARD") {
+      this._drawCrawlcardScreen(rd);
+      present(rd, 0, 0);
+      return;
+    }
+
     // Menu loading screen (leaving a course): the just-left track's sky orbits
     // behind the intro-style loading bar. Rendered here with no 3D geometry —
     // the bar fill mirrors the boot intro's LOAD phase.
@@ -875,6 +933,156 @@ export class RacerGame {
     return v.respawnT > 0
       ? Math.min(1, Math.sin((v.respawnT / 45) * Math.PI) * 0.9)
       : 0;
+  }
+
+  // ---- Pre-menu crawlcard screen ---------------------------------------------
+  // The autosave icon's 3D device (assets/3D/models/crawlcard.glb) spins on a
+  // black background, with the save-notice message in white smallfont beneath.
+  // Runs once after the title intro finishes and before the menu loop starts.
+  _drawCrawlcardScreen(rd) {
+    drawRect(rd, 0, 0, SCREEN_W, SCREEN_H, rgba(0, 0, 0), true);
+    // The backdrop is HUD-space (no depth write), so reset depth first — the
+    // mesh's triangles are depth-tested and must always paint over the black.
+    rd.depth.fill(Infinity, 0, SCREEN_W * SCREEN_H);
+
+    // Straight-on camera at (0, 0, z) looking at the origin.
+    const cam = { x: 0, y: 0, z: CRAWLCARD_CAM_Z, yaw: 180, pitch: 0, fovMul: 1 };
+    const spin = (this.frame * CRAWLCARD_SPIN) % 360;
+    const tris = this._buildCrawlcardTris(cam, spin);
+    tris.sort((a, b) => b.avgZ - a.avgZ);
+    for (const t of tris) {
+      const fn = t.texture ? drawTexturedTriangle : drawTriangle;
+      const v0 = t.verts[0];
+      for (let i = 1; i + 1 < t.verts.length; i++) {
+        fn(rd, v0, t.verts[i], t.verts[i + 1], t.color, t.texture);
+      }
+    }
+
+    // Notice in white smallfont, centered + word-wrapped below the card.
+    const fonts = this.hudFonts;
+    const targetH = 14;
+    const maxW = SCREEN_W - 24;
+    const lines = fonts && fonts.body
+      ? this._wrapBodyLines(fonts, CRAWLCARD_MSG, targetH, maxW)
+      : this._wrapFallbackLines(CRAWLCARD_MSG, maxW >> 1);
+    const lineStep = targetH + 5;
+    let y = SCREEN_H - (lines.length * lineStep) - 6;
+    for (const line of lines) {
+      if (fonts && fonts.body) {
+        const w = measureBodyText(fonts, line, targetH, 1);
+        drawBodyText(rd, fonts, line, (SCREEN_W - w) >> 1, y, targetH, WHITE, 1);
+      } else {
+        const s = Math.max(1, Math.round(targetH / 5));
+        drawText(rd, line, (SCREEN_W - line.length * 5 * s) >> 1, y, 0xffffffff, s);
+      }
+      y += lineStep;
+    }
+  }
+
+  // Rotates the prepared crawlcard tris around the world Y axis and projects
+  // them. Same scale→yaw transform family as buildVehicleTris, but the card
+  // owns its own constants (no car tuning sliders) and is anchored by its
+  // visual center (prep.centerY) so the model sits exactly on CRAWLCARD_Y.
+  _buildCrawlcardTris(cam, yawDeg) {
+    const prep = this.crawlcardMesh;
+    const out = [];
+    if (!prep || !prep.tris || !prep.tris.length) return out;
+    const sc = CRAWLCARD_SCALE;
+    const yaw = yawDeg * (Math.PI / 180);
+    const cyw = Math.cos(yaw), syw = Math.sin(yaw);
+    // World Y that projects to screen row CRAWLCARD_Y, then drop the model's
+    // own vertical midpoint onto it.
+    const centerWorldY = (HALF_H - CRAWLCARD_Y) / scaleAtY(CRAWLCARD_CAM_Z);
+    const yOff = centerWorldY - (prep.centerY || 0) * sc;
+    const w0 = {}, w1 = {}, w2 = {};
+    for (const t of prep.tris) {
+      const lx = (v, w) => {
+        const x = v[0] * sc, y = v[1] * sc, z = v[2] * sc;
+        w.x = x * cyw + z * syw;
+        w.y = y + yOff;
+        w.z = -x * syw + z * cyw;
+      };
+      lx([t.ax, t.ay, t.az], w0);
+      lx([t.bx, t.by, t.bz], w1);
+      lx([t.cx, t.cy, t.cz], w2);
+
+      const p0 = project(w0, cam);
+      if (!p0.visible) continue;
+      const p1 = project(w1, cam);
+      if (!p1.visible) continue;
+      const p2 = project(w2, cam);
+      if (!p2.visible) continue;
+
+      // Flat lighting from the world-space face normal (upper-right light).
+      const e1x = w1.x - w0.x, e1y = w1.y - w0.y, e1z = w1.z - w0.z;
+      const e2x = w2.x - w0.x, e2y = w2.y - w0.y, e2z = w2.z - w0.z;
+      let nx = e1y * e2z - e1z * e2y;
+      let ny = e1z * e2x - e1x * e2z;
+      let nz = e1x * e2y - e1y * e2x;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl; ny /= nl; nz /= nl;
+      const dot = Math.abs(nx * CARD_LX + ny * CARD_LY + nz * CARD_LZ);
+      const bright = 0.6 + 0.4 * dot;
+
+      const c = t.color;
+      const r = Math.min(255, ((c & 0xff) * bright)) | 0;
+      const g = Math.min(255, (((c >>> 8) & 0xff) * bright)) | 0;
+      const b = Math.min(255, (((c >>> 16) & 0xff) * bright)) | 0;
+      const lit = (255 << 24) | (b << 16) | (g << 8) | r;
+
+      if (t.texture) {
+        p0.u = t.ua; p0.v = t.va;
+        p1.u = t.ub; p1.v = t.vb;
+        p2.u = t.uc; p2.v = t.vc;
+      }
+      out.push({
+        verts: [{ ...p0 }, { ...p1 }, { ...p2 }],
+        color: lit,
+        avgZ: (p0.cz + p1.cz + p2.cz) * 0.3333333,
+        texture: t.texture || undefined,
+      });
+    }
+    return out;
+  }
+
+  // Greedy word wrap using the real smallfont advance metrics, so lines fit
+  // maxW px at the given target height. Used by the crawlcard notice (and any
+  // future body-text block).
+  _wrapBodyLines(fonts, text, targetH, maxW, gap = 1) {
+    const words = String(text).split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = "";
+    for (const w of words) {
+      const test = cur ? `${cur} ${w}` : w;
+      if (measureBodyText(fonts, test, targetH, gap) <= maxW) {
+        cur = test;
+      } else {
+        if (cur) lines.push(cur);
+        cur = w;
+      }
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  // Bitmap-font fallback wrap (5*scale px per char) when the body font is
+  // missing — the crawlcard state only runs after assets are in, so this is
+  // purely defensive.
+  _wrapFallbackLines(text, maxChars) {
+    const out = [];
+    for (const raw of String(text).split("\n")) {
+      let line = "";
+      for (const w of raw.split(/\s+/).filter(Boolean)) {
+        if (line && (line.length + w.length + 1) > maxChars) {
+          out.push(line);
+          line = w;
+        } else {
+          line = line ? `${line} ${w}` : w;
+        }
+      }
+      if (line) out.push(line);
+    }
+    return out;
   }
 
   // ---- Autosave icon ----------------------------------------------------------
