@@ -58,6 +58,18 @@ verifiable 1:1 against the flat bucket. Unknown names pass through.
 - Main menu now loops track 22 U-Turn as its own theme, with confirm/deny/select
   menu SFX and a dedicated race shuffle handoff.
 
+Notes on boot audio reliability:
+- The DOM-overlay intro (`racer/intro.js`) preloads the crash/punch SFX and
+  awaits that buffer before starting the logo punch so the impact plays
+  exactly on cue (avoids browser audio suspension race conditions).
+- `RacerGame.warmup()` begins background asset fetches (GLB, fonts, SFX)
+  before the intro reveal so the game can start without a loading-bar flash.
+
+### Input
+- `Escape` no longer doubles as confirm. It's handled explicitly as a BACK
+  edge via `keyJustPressed("Escape")` in the menu controller and pause
+  handling; hint strings were updated from `K/BKSP:BACK` to `ESC:BACK`.
+
 ### Menus (racer/menus.js)
 - MenuController owns MAIN / GAMEMODES / COURSES / CONTROLS /
   OPTIONS / BINDINGS / ABOUT. COURSES scrolls levels.js LEVELS.

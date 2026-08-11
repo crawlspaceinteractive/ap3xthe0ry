@@ -55,10 +55,15 @@ it later, or port features back into the shared Crawlspace engine feature
 list. Do not delete as "unused."
 
 ## Boot flow (main.js to racer)
-
+\
 main.js mounts a 640x480 canvas and starts RacerGame. Asset loading is
-gated by a loading bar inside the title cinematic; the menu orbits the
-track until PLAY.
+gated by a DOM-overlay intro reel and the title cinematic: the new
+`intro.js` runs a pre-title splash + dev logo punch and coordinates
+preloads (audio SFX, big font) so the title punch sound plays reliably.
+`RacerGame.warmup()` starts background asset fetches (car GLB, textures,
+fonts, sfx) before the `runIntro()` reveal; `start()` then begins the
+game loop once the intro hands control to the renderer. The menu orbits
+the track until PLAY.
 
 ## Key state shapes
 

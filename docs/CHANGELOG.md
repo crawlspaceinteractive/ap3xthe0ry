@@ -529,3 +529,20 @@ Purpose: full history of changes & fixes so regressions can be traced.
    cancels with deny; back returns to the calling menu), and ABOUT (confirm/
    back dismiss). Slider adjusts and row navigation stay silent — only
    confirm/cancel decisions beep.
+
+## [Session: Docs sweep & recent changes] (2026-08-11)
+- DOCS: updated `docs/README.md`, `docs/ARCHITECTURE.md`, and `docs/DESIGN.md`
+  to reflect the latest code changes and UX polish.
+- FEATURES: documented `racer/intro.js` DOM-overlay intro and the new
+  `RacerGame.warmup()` prefetch path (ensures intro SFX/play reliability), the
+  main-menu theme loop (track 22 "U-Turn"), and menu confirm/deny/select SFX.
+- UI: noted the quick course loading screen (map-select globe + LOADING bar),
+  the WARN card art (`assets/2D/ui/intro/WARNING.png`), and the `ESC:BACK`
+  semantics (Escape removed from the fixed START mapping).
+- GAMEPLAY/ENGINE: recorded off-road behavior (sloped grass ramp to
+  `track.offroadY`, open-wall runs with deterministically-seeded tire stacks
+  via `racer/tirestacks.js`), minimap auto-scaling, and smoother downhill
+  feel changes in `racer/vehicle.js` + `racer/chasecam.js`.
+- NOTE: Changelog is append-only — this entry summarizes recent commits
+  (see commit history) and documents the doc updates performed to match
+  implementation.

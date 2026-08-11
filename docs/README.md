@@ -15,6 +15,13 @@ python3 -m http.server 8000
 # open http://127.0.0.1:8000/index.html
 ```
 
+Alternative helper (uses the project's launcher script):
+
+```bash
+./launch.sh
+# opens a local server and directs a browser to the game
+```
+
 Game assets (textures, GLB model, audio) resolve through
 `engine/asseturls.js`: the Git tree keeps nested folders
 (`assets/2D/…`, `assets/3D/…`, `assets/audio/…`) while `assetUrl()` maps each
@@ -25,8 +32,13 @@ locally. Missing GLB models fall back to procedural geometry and log a warning.
 ## Boot flow
 
 `main.js` mounts a 640x480 canvas (internal 320x240 render upscaled 2x +
-dithered) and starts `RacerGame`. States: INTRO (warning card → title swoop
- → PRESS START rev) → MENU (looped U-Turn theme, PLAY submenu) → RACE ⇄ PAUSE.
+ dithered) and starts `RacerGame`. States: INTRO (DOM-overlay splash +
+ title punch → WARNING card → PRESS START rev) → MENU (looped U-Turn theme,
+ PLAY submenu) → RACE ⇄ PAUSE. The boot order calls `game.warmup()` prior to
+ the intro reveal so critical assets (car GLB, fonts, SFX) begin fetching in
+ the background; `intro.js` also preloads the crash/punch SFX and waits for
+ it to be ready so the punch sound plays reliably during the logo impact.
+
 Entering a course now shows a quick map-select globe loading screen with an
 orange LOADING bar before the race begins.
 - SHIFT — drift (hold + steer, release to boost)
