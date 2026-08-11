@@ -21,6 +21,12 @@ import { tunable } from "../engine/tunable.js";
 // read fresh each physics step, so changes apply instantly (restart:false).
 const S = (min, max, step) => ({ min, max, step, restart: false });
 
+// Contact radius for solid geo obstacles (islands/mountains/rings/buildings).
+// Deliberately larger than the road-border carRadius (0.05 — a near-point) so
+// the car visibly bumps into off-road geo instead of clipping through it.
+// Matches the ~car-width feel used by car-vs-car collision (0.85 combined).
+const GEO_COLLIDE_RADIUS = 0.8;
+
 export const TUNE = tunable("vehicle", {
   // Speed
   topSpeed:      2.5,    // world units / frame
@@ -370,6 +376,32 @@ export function stepVehicle(v, controls, track) {
         }
         if (Math.abs(vn) > 0.10) v.wallHitT = 10;
         if (Math.abs(vn) > 0.28) { v.charge *= 0.4; }   // hard hits hurt the drift
+      }
+    }
+  }
+
+  // ---- 1.3 Geo obstacle collision (solid walls) ---------------------------------
+  // Inset islands / mountains / land-rings / buildings are solid. Circle-vs-AABB
+  // push-out against every instance whose height span [baseY, baseY+topY] covers
+  // the car's band, in the same spirit as the wall bounce above: a positional
+  // push plus a soft velocity bounce along the contact direction. `track.geo` is
+  // the per-track GeoSpawner (stamped in racergame.loadLevel); cars fly clean
+  // over low geo when airborne above its span.
+  if (track.geo && track.geo.resolve) {
+    const res = track.geo.resolve(v.x, v.z, GEO_COLLIDE_RADIUS, v.y);
+    if (res.blocked && (res.px !== 0 || res.pz !== 0)) {
+      v.x += res.px;
+      v.z += res.pz;
+      const len = Math.hypot(res.px, res.pz) || 0.0001;
+      const nx = res.px / len, nz = res.pz / len;
+      const vn = v.vx * nx + v.vz * nz;
+      if (vn < 0) {
+        v.vx -= (1 + TUNE.wallBounce) * vn * nx;
+        v.vz -= (1 + TUNE.wallBounce) * vn * nz;
+        const loss = clamp(Math.abs(vn) * TUNE.wallSpeedLoss, 0, 0.5);
+        v.vx *= 1 - loss;
+        v.vz *= 1 - loss;
+        if (Math.abs(vn) > 0.10) v.wallHitT = 10;
       }
     }
   }

@@ -13,6 +13,7 @@
  * XYZ objects {x,y,z, bank?, hw?} from the spline editor. The AHURA west
  * straight jump ramp is applied only when applyDefaultRamp is true.
  */
+import { normalizeBiome } from "./biomes.js";
 
 // ---- Control points ---------------------------------------------------------
 // Ring layout (never self-intersects): angle around origin + radius + height.
@@ -128,6 +129,11 @@ export function buildTrack(def) {
   const halfWidth = cfg.halfWidth || HALF_WIDTH;
   const sampleSpace = cfg.sampleSpace || SAMPLE_SPACE;
   const applyDefaultRamp = !!cfg.applyDefaultRamp;
+  const biome = normalizeBiome(cfg.biome);
+  const skyBiome = normalizeBiome(cfg.skyBiome != null ? cfg.skyBiome : cfg.biome);
+  // Per-level geo profile (island/mountain/ring/building placement knobs).
+  // Consumed by racer/geospawner.js; null → the default profile applies.
+  const geoProfile = cfg.geo && typeof cfg.geo === "object" ? cfg.geo : null;
   const pts = normalizeControlPoints(cfg.cp || CP, halfWidth);
   const n = pts.length;
   if (n < 3) {
@@ -271,6 +277,9 @@ export function buildTrack(def) {
     transW: Math.max(TRANS_MIN_W, (maxEdge - (minY - OFFROAD_DROP)) / TRANS_SLOPE),
     lipIdx: applyDefaultRamp ? lipIdx : 0,
     spawnIdx: 0,
+    biome,
+    skyBiome,
+    geoProfile,
   };
 }
 

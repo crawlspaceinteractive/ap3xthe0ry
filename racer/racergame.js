@@ -22,6 +22,7 @@ import { createVehicle, stepVehicle } from "./vehicle.js";
 import { createChaseCam, updateChaseCam, snapChaseCam } from "./chasecam.js";
 import { prepareVehicleMesh, buildVehicleTris, getHeadlightRig } from "./vehiclemesh.js";
 import { buildTrackTris } from "./trackrender.js";
+import { getBiome, normalizeBiome, getBiomeTextureUrls, BIOME_NAMES } from "./biomes.js";
 import { createTireStacks, stepTireStacks, buildTireStackTris } from "./tirestacks.js";
 import { drawGlobePlaceholder, drawGlobeCrosshair } from "./trackglobe.js";
 import { drawRacerHUD } from "./racerhud.js";
@@ -33,6 +34,8 @@ import { createLapTimer, stepLapTimer, resetLapTimer, unarmLapTimer } from "./la
 import { racerSound } from "./racersound.js";
 import { createSkyLayers } from "./sky.js";
 import { createScenery } from "./scenery.js";
+import { createGeoSpawner } from "./geospawner.js";
+import { loadGeoAssets } from "./geoassets.js";
 import { loadAutosave, applySnapshot, captureSnapshot, saveAutosave } from "../data/autosave.js";
 
 /** Authoring hook: ?level=hill-test or ?level=1 (resolved after manifest hydrate).
@@ -85,6 +88,11 @@ const SMOKE_COLORS = [rgba(200, 200, 205), rgba(80, 165, 255), rgba(255, 150, 50
 const BOOST_COLORS = [rgba(255, 200, 80), rgba(255, 120, 40), rgba(255, 240, 180)];
 const FLARE_TINT = rgba(255, 250, 235);
 const DUST_COLORS = [rgba(150, 130, 95), rgba(118, 98, 68)];  // off-road dirt kick-up
+
+// UV tile scale for geo GLB terrain textures — matches the legacy island
+// platforms (0.08) and sits near the racer's off-road grass tile density (0.07)
+// so the grass/dirt zones read at a similar texel pitch as the floor.
+const GEO_TEX_SCALE = 0.08;
 
 // Head2head player accent colors (HUD + winner banner).
 const P1_ACCENT = rgba(120, 240, 200);
@@ -150,6 +158,7 @@ export class RacerGame {
     this.particles = [];
     this.sky = createSkyLayers();
     this.scenery = createScenery();
+    this.geo = createGeoSpawner();
     this.hudFonts = null;      // sprite numeral fonts (racer/hudfont.js)
     this.autosaveIconAnim = null; // assets/2D/ui/autosave_icon.gif -- all frames + delays (engine/gifdecode.js)
     this.crawlcardMesh = null;   // prepared tris for assets/3D/models/crawlcard.glb (pre-menu screen)
@@ -216,7 +225,7 @@ export class RacerGame {
     this.menu.courseRow = this.levelIdx;
     this._previewIdx = this.levelIdx;
 
-    const [road, grass, meshData, hudFonts, flare, ray, smoke, autosaveIconAnim, crawlcardMeshData] = await Promise.all([
+    const [road, grass, meshData, hudFonts, flare, ray, smoke, autosaveIconAnim, crawlcardMeshData, geoAssets, biomeTextures] = await Promise.all([
       loadTexture(assetUrl("assets/2D/textures/base/rock.png"), { wrap: true }),
       loadTexture(assetUrl("assets/2D/textures/base/grass.png"), { wrap: true }),
       // applyNodeTransforms: respect rotations the creator bakes into the
@@ -232,6 +241,26 @@ export class RacerGame {
       // nodes carry the authored translations (screen/grip/chip pieces), so
       // applyNodeTransforms is required to assemble the device correctly.
       loadGLBMeshIfAvailable(assetUrl("assets/3D/models/crawlcard.glb"), "crawlcard", false, { applyNodeTransforms: true }),
+      // Island/mountain/land-ring GLBs for the geo spawner (racer/geoassets.js).
+      // These resolve before _assetsReady flips, so the first geo.place() can
+      // consume the registry. The return value is the registry map (unused).
+      loadGeoAssets(),
+      // Biome terrain textures (top/side/under) for the geo GLBs — the same
+      // base textures the legacy platformer uses (game/textureatlas.js). Shared
+      // URLs dedupe in loadTexture's cache. Loaded once, held on this.biomeTextures.
+      (async () => {
+        const map = {};
+        await Promise.all(["default", ...BIOME_NAMES].map(async (name) => {
+          const urls = getBiomeTextureUrls(name);
+          const [top, side, under] = await Promise.all([
+            loadTexture(urls.top, { wrap: true }),
+            loadTexture(urls.side, { wrap: true }),
+            loadTexture(urls.under, { wrap: true }),
+          ]);
+          map[name] = { top, side, under };
+        }));
+        return map;
+      })(),
     ]);
     this.tex.road = road;
     this.tex.grass = grass;
@@ -239,6 +268,7 @@ export class RacerGame {
     this.hudFonts = hudFonts;
     this.fx = { flare, ray, smoke };
     this.autosaveIconAnim = autosaveIconAnim;
+    this.biomeTextures = biomeTextures;
     // Center the card on its own vertical midpoint too (prepareVehicleMesh
     // only centers XZ / rests the base on Y=0) so the spinner can place the
     // model's visual center exactly where the layout wants it.
@@ -340,7 +370,24 @@ export class RacerGame {
     this.vehicle = this.players[0].vehicle;
     this.cam = this.players[0].cam;
     this.tireStacks = createTireStacks(this.track);
-    if (this._assetsReady) this.scenery.place(this.track);
+    if (this._assetsReady) {
+      this.scenery.place(this.track);
+      // Geo: GLB islands/mountains/rings + procedural buildings, placed from
+      // the level's `geo` profile (null → DEFAULT_GEO_PROFILE). The spawner is
+      // stamped on the track so vehicle.js can resolve solid-wall collision.
+      // Terrain GLBs get per-zone biome textures (top/side/under) baked into
+      // their precached tris; missing textures fall back to flat tints.
+      const bio = getBiome(this.track.biome);
+      const gTex = this.biomeTextures[normalizeBiome(this.track.biome)] || null;
+      this.geo.place(this.track, this.track.geoProfile || null, {
+        ...bio,
+        textureTop: gTex ? gTex.top : null,
+        textureSide: gTex ? gTex.side : null,
+        textureUnder: gTex ? gTex.under : null,
+        textureScale: GEO_TEX_SCALE,
+      });
+      this.track.geo = this.geo;
+    }
     for (const p of this.players) {
       snapChaseCam(p.cam, p.vehicle);
       resetLapTimer(p.lapTimer);
@@ -381,6 +428,8 @@ export class RacerGame {
   unloadLevel(opts) {
     this.particles.length = 0;
     this.tireStacks = null;
+    if (this.geo) this.geo.reset();
+    this.track = null;
     // P2 owns its own InputController (keyboard off, shared GamepadManager);
     // destroy it so its listeners don't outlive the level. P1's this.input
     // lives for the whole game session.
@@ -1117,8 +1166,9 @@ export class RacerGame {
     clearSky(rd, cam.yaw, this.frame, y0, h);
     this.sky.blit(rd, cam.yaw, cam.pitch, p.view || undefined);
 
-    const tris = buildTrackTris(this.track, this.tex, cam, this.frame);
+    const tris = buildTrackTris(this.track, this.tex, cam, this.frame, getBiome(this.track.biome));
     this.scenery.build(cam, this.frame, tris);
+    this.geo.build(cam, this.frame, tris);
     buildTireStackTris(this.tireStacks, cam, tris);
     for (const car of allPlayers) {
       const cv = car.vehicle;
