@@ -11,6 +11,9 @@
  *          center) leaving white after-images
  *   WAIT   1s beat
  *   PRESS  "PRESS START" blinks until START — game plays the rev noise
+ *   CRAWL  holding phase handed to RacerGame, which plays the pre-menu
+ *          crawlcard screen (spinning save device + autosave notice) here,
+ *          then calls beginLoad() to resume
  *   LOAD   orange loading bar fills (waits for assets), then done → MENU
  */
 import { drawRect, drawText, rgba } from "../engine/renderer.js";
@@ -119,11 +122,22 @@ export class TitleIntro {
       return null;
     }
     if (this.phase === "PRESS") {
-      this.phase = "LOAD";
+      this.phase = "CRAWL";
       this.t = 0;
       return "start";
     }
     return null;
+  }
+
+  /** Resume from the CRAWL phase (the crawlcard screen has finished) into the
+   *  LOAD phase so the loading bar fills, then the intro finishes → MENU. */
+  beginLoad() {
+    if (this.phase === "CRAWL") {
+      this.phase = "LOAD";
+      this.t = 0;
+      return true;
+    }
+    return false;
   }
 
   /** One 60Hz step. */
@@ -146,6 +160,8 @@ export class TitleIntro {
         break;
       case "PRESS":
         break; // waits for pressStart()
+      case "CRAWL":
+        break; // holds while RacerGame plays the crawlcard screen (beginLoad())
       case "LOAD":
         if (t >= LOAD_T && assetsReady) this.finished = true;
         break;
@@ -228,7 +244,7 @@ export class TitleIntro {
       return;
     }
 
-    // SLIDE / WAIT / PRESS / LOAD all show AP3X locked in place.
+    // SLIDE / WAIT / PRESS / CRAWL / LOAD all show AP3X locked in place.
     if (this.phase !== "LOAD") this._drawBig(rd, L, fonts, "AP3X", L.apxX, L.apxY);
 
     if (this.phase === "SLIDE") {
@@ -254,7 +270,7 @@ export class TitleIntro {
       return;
     }
 
-    if (this.phase === "WAIT" || this.phase === "PRESS") {
+    if (this.phase === "WAIT" || this.phase === "PRESS" || this.phase === "CRAWL") {
       this._drawBig(rd, L, fonts, "THE0RY", L.theoX, L.theoY);
       if (this.phase === "PRESS" && (frame & 32)) {
         this._drawBody(rd, L, fonts, "PRESS START", L.theoY + L.h + 26, 18, null);

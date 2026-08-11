@@ -8,6 +8,7 @@
 import { buildPoly, rgba, shadeFace } from "../engine/renderer.js";
 import { sinDeg, cosDeg } from "../engine/luts.js";
 import { RUMBLE_W } from "./track.js";
+import { getBiome } from "./biomes.js";
 
 const CULL_DIST      = 165;   // max sample distance from camera
 const CULL_DIST_SQ   = CULL_DIST * CULL_DIST;
@@ -15,8 +16,6 @@ const BEHIND_MARGIN  = 16;    // keep samples slightly behind the camera
 const RUMBLE_DIST_SQ = 120 * 120;
 const WALL_H         = 1.7;
 
-const ROAD_TINT   = rgba(230, 230, 232);
-const GRASS_TINT  = rgba(215, 235, 210);
 const RUMBLE_RED  = rgba(205, 45, 45);
 const RUMBLE_WHT  = rgba(232, 232, 232);
 const WALL_A      = rgba(125, 125, 138);
@@ -36,10 +35,11 @@ const CHECK_B     = rgba(25, 25, 28);
 const BEVEL_IN   = 0.62;
 const BEVEL_LIFT = 0.2;
 
-export function buildTrackTris(track, tex, camera, frame) {
+export function buildTrackTris(track, tex, camera, frame, biome) {
   const out = [];
   const s = track.samples;
   const n = track.count;
+  const bio = biome || getBiome(track.biome);
 
   // ---- Ground plane under everything (camera-centered) ----------------------
   // A flat textured plain at track.offroadY hides the sky gradient / void
@@ -67,7 +67,7 @@ export function buildTrackTris(track, tex, camera, frame) {
             { x: x1, y: gy, z: z1, u: x1 * U, v: z1 * U },
             { x: x0, y: gy, z: z1, u: x0 * U, v: z1 * U },
           ];
-          for (const t of buildPoly(gpts, GRASS_TINT, tex.grass, camera)) {
+          for (const t of buildPoly(gpts, bio.ground, tex.grass, camera)) {
             t.avgZ += 500; // force ground behind everything in the painter sort
             out.push(t);
           }
@@ -116,7 +116,7 @@ export function buildTrackTris(track, tex, camera, frame) {
         { x: bL.x, y: bL.y, z: bL.z, u: 0,   v: vb },
       ];
       if (tex.road) {
-        for (const t of buildPoly(pts, ROAD_TINT, tex.road, camera)) out.push(t);
+        for (const t of buildPoly(pts, bio.road, tex.road, camera)) out.push(t);
       } else {
         for (const t of buildPoly(pts, rgba(95, 95, 100), null, camera)) out.push(t);
       }
@@ -148,7 +148,7 @@ export function buildTrackTris(track, tex, camera, frame) {
     // (buildPoly) so the painter's pass sorts whole quads coherently instead of
     // independently-sorted triangles (which let the road show through at speed).
     if (!a.gap && !b.gap) {
-      const bevelCol = shadeFace(ROAD_TINT, 0.55);
+      const bevelCol = shadeFace(bio.road, 0.55);
       const wallCol = (i & 3) < 2 ? WALL_A : WALL_B;
       for (const side of [-1, 1]) {
         const up0 = sampleUp(a), up1 = sampleUp(b);
@@ -228,7 +228,7 @@ export function buildTrackTris(track, tex, camera, frame) {
           { x: g2.x, y: track.offroadY + 0.02, z: g2.z, u: g2.x * U, v: g2.z * U },
           { x: g3.x, y: g3.y - 0.02, z: g3.z, u: g3.x * U, v: g3.z * U },
         ];
-        for (const t of buildPoly(gpts, GRASS_TINT, tex.grass, camera)) {
+        for (const t of buildPoly(gpts, bio.apron, tex.grass, camera)) {
           t.avgZ += 0.15; // grass sorts behind the road/rumble at shared edges
           out.push(t);
         }
