@@ -5,11 +5,11 @@
   "systems": [
     {
       "name": "1.1 Vehicle Movement Model",
-      "status": "planned",
+      "status": "complete",
       "priority": "high",
       "estimatedHours": 25,
       "dependencies": [],
-      "notes": "Arcade-style drift handling: acceleration, braking, steering, handbrake turns. Physics using forces with grip curve and drift angle scaling.",
+      "notes": "Built — racer/vehicle.js: acceleration with top-speed cap, speed-sensitive steering, handbrake drift with countersteer angle control, and a drift charge → tiered boost system (blue/orange/purple).",
       "tasks": [
         "Acceleration and top-speed cap per vehicle",
         "Steering with speed-sensitive turn radius",
@@ -19,11 +19,11 @@
     },
     {
       "name": "1.2 Collision & Wall Bounce",
-      "status": "planned",
+      "status": "complete",
       "priority": "high",
       "estimatedHours": 12,
       "dependencies": ["phase1_0"],
-      "notes": "Soft wall collisions with speed reduction and bounce. Track boundaries defined by spline with width.",
+      "notes": "Built — spline-border sphere collision with shallow-angle bounce + speed loss and sticky drag to punish wall riding. Non-solid wall runs open drivable gaps.",
       "tasks": [
         "Sphere/tube collision against track borders",
         "Wall bounce at shallow angles",
@@ -32,11 +32,11 @@
     },
     {
       "name": "1.3 Ground Detection & Jump Mechanics",
-      "status": "planned",
+      "status": "complete",
       "priority": "medium",
       "estimatedHours": 10,
       "dependencies": ["phase1_0"],
-      "notes": "Vehicles can jump off ramps and over gaps. Use raycasting to detect ground for landing and jump tokens.",
+      "notes": "Built — spline-slope launch, ramp-lip auto-boost, in-air pitch control with flip reward, landing impact + speed retention, fall-off respawn, and smoothed downhill ground-follow.",
       "tasks": [
         "Ramp detection and auto-jump boost",
         "In-air pitch control for flips",
@@ -46,15 +46,15 @@
     },
     {
       "name": "1.4 Camera System",
-      "status": "planned",
+      "status": "complete",
       "priority": "high",
       "estimatedHours": 15,
       "dependencies": ["phase1_0"],
-      "notes": "Dynamic third-person chase cam with drift offset. Smooth follow, look-ahead, and collision avoidance.",
+      "notes": "Built — dynamic third-person chase cam (chasecam.js) with drift offset, groundHeightAt floor clamp, smoothed view pitch, and snap on respawn.",
       "tasks": [
         "Chase cam with speed-dependent distance",
         "Lateral offset during drift",
-        "Track‑side collision avoidance",
+        "Track-side collision avoidance",
         "Manual rear-view toggle"
       ]
     }

@@ -114,6 +114,14 @@
     }
   ],
   "objects": [],
+  "geo": {
+    "seed": 4242,
+    "density": 100,
+    "island": { "count": 8, "scale": 1.0 },
+    "mountain": { "count": 3, "scale": 1.0 },
+    "landRing": { "count": 2 },
+    "building": { "count": 12 }
+  },
   "procgen": {
     "seed": 1337,
     "density": 100,

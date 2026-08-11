@@ -5,16 +5,16 @@
   "systems": [
     {
       "name": "2.1 Spline-Based Track Generator",
-      "status": "planned",
+      "status": "complete",
       "priority": "high",
       "estimatedHours": 30,
       "dependencies": [],
-      "notes": "Generate track layouts from Catmull-Rom splines. Use Voronoi island system as floating raceway segments.",
+      "notes": "Built. tools/spline-editor.html draws closed Catmull-Rom loops with per-control-point width/bank/elevation and exports kind:\"spline-track\" JSON to assets/3D/maps/ (manifest.json → hydrateLevels()). The SAME sampled spline drives physics (racer/track.js) and rendering (racer/trackrender.js); ramp segments + per-CP width/bank included. 4 playable courses: AHURA RING (procedural), MY TRACK, HILL TEST, BANK TEST.",
       "tasks": [
-        "Spline editor or procedural generation",
-        "Varying width, banking, and elevation",
-        "Segment types: straight, curve, hairpin, chicane",
-        "Export to track data format for renderer"
+        "Spline editor (tools/spline-editor.html) — done",
+        "Varying width, banking, and elevation — done",
+        "Segment types: straight, curve, hairpin, chicane — done (CP-driven)",
+        "Export to track data format shared by physics + renderer — done"
       ]
     },
     {
@@ -23,12 +23,12 @@
       "priority": "medium",
       "estimatedHours": 18,
       "dependencies": ["phase2_0"],
-      "notes": "Leverage existing Voronoi islands and biome decors. Add racing‑themed props (barriers, signs, lights).",
+      "notes": "Built: solid/non-solid wall runs, destructible tire-stack barriers on open stretches (racer/tirestacks.js), pine billboard trees (racer/scenery.js), and the fuji parallax sky (racer/sky.js). Missing: track-side cones, direction signs, start/finish + checkpoint markers, streetlamps, and the per-biome texture swap (tokens + placeholder textures planned under 2.4).",
       "tasks": [
-        "Track-side barrier rails and cones",
-        "Direction signs and checkpoint markers",
-        "Nighttime neon glow and streetlamps",
-        "Biome integration: desert, city, neon, volcano"
+        "Track-side barrier rails and cones — barrier rails done, cones missing",
+        "Direction signs and checkpoint markers — missing",
+        "Streetlamps — missing (neon glow dropped with Phase 4 kart split)",
+        "Biome integration: desert, city (day/night), volcano — tokens + floor texture placeholders via 2.4"
       ]
     },
     {
@@ -37,12 +37,26 @@
       "priority": "medium",
       "estimatedHours": 10,
       "dependencies": ["phase2_0"],
-      "notes": "Add oil slicks, boost pads, speed ramps, and destructible barriers.",
+      "notes": "Deferred alongside the Phase 4 removal — no kart power-ups. Boost already comes from drift tiers, ramps, and flips. Soft barriers exist (tire stacks). Remaining candidates: oil slicks, non-kart boost pads, moving obstacles.",
       "tasks": [
         "Boost pad trigger with speed multiplier",
         "Oil slick physics (reduce grip)",
-        "Destructible crates and barrels",
         "Moving obstacles on track"
+      ]
+    },
+    {
+      "name": "2.4 Track Environment via Island-Gen Builders (DEFERRED → Phase 5)",
+      "status": "planned",
+      "priority": "high",
+      "estimatedHours": 24,
+      "dependencies": ["phase2_0", "phase2_1"],
+      "notes": "Locked plan, NOT built. Deferred to prioritize head2head/splitscreen (5.2). Repurpose game/world.js island/Voronoi generation into per-level terrain: seeded block-shape builders (slab/pillar/stepped/L/ledge/column/trapezoid/tri-prism/crescent/cross) plus ported island/mountain GLB rocks, placed in Voronoi rings around the track's bounding shape, collidable via AABB push-out in vehicle.js (horizontal only, height-gated so jumps clear), staying clear of the drivable band. New per-biome token in the spline editor + level JSON: grass (default) / desert / city_day / city_night / volcano → floor textures (placeholder grass/sand/volcanic/rock/dirt, swappable for photosourced uploads). No sky tinting.",
+      "tasks": [
+        "Port island-gen block builders + seeded Voronoi-ring placement around track bounds",
+        "Collidable AABB push-out in vehicle.js (wall-bounce feel, jump-over gated)",
+        "GLB island/mountain rocks via buildMeshTris",
+        "Per-biome token: spline editor field + level JSON + levels.js fallback",
+        "Per-biome floor texture map (placeholder textures, user-swappable)"
       ]
     }
   ]

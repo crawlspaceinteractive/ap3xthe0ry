@@ -9,11 +9,12 @@
 import {
   createRenderer, clearSky, present, setFogDistance,
   drawTriangle, drawTexturedTriangle, drawPixelW, drawBillboardSprite,
-  buildTexturedFace, project, rgba, drawRect,
+  buildTexturedFace, project, rgba, drawRect, drawText,
 } from "../engine/renderer.js";
-import { sinDeg, cosDeg, scaleAtX, HALF_W, SCREEN_W, SCREEN_H } from "../engine/luts.js";
+import { sinDeg, cosDeg, scaleAtX, scaleAtY, HALF_W, SCREEN_W, SCREEN_H, HALF_H } from "../engine/luts.js";
 import { InputController, BTN_FLAGS } from "../engine/input.js";
-import { loadTexture } from "../engine/textureloader.js";
+import { loadTexture, loadAnimatedTexture, frameAtTime } from "../engine/textureloader.js";
+import { drawSpriteFit } from "../engine/spritesheet.js";
 import { assetUrl } from "../engine/asseturls.js";
 import { loadGLBMeshIfAvailable } from "../engine/geometry.js";
 import { getLevelDef, findLevelIndex, resolveLevelTrack, hydrateLevels, levelCount } from "./levels.js";
@@ -21,17 +22,20 @@ import { createVehicle, stepVehicle } from "./vehicle.js";
 import { createChaseCam, updateChaseCam, snapChaseCam } from "./chasecam.js";
 import { prepareVehicleMesh, buildVehicleTris, getHeadlightRig } from "./vehiclemesh.js";
 import { buildTrackTris } from "./trackrender.js";
+import { getBiome, normalizeBiome, getBiomeTextureUrls, BIOME_NAMES } from "./biomes.js";
 import { createTireStacks, stepTireStacks, buildTireStackTris } from "./tirestacks.js";
 import { drawGlobePlaceholder, drawGlobeCrosshair } from "./trackglobe.js";
 import { drawRacerHUD } from "./racerhud.js";
 import { TitleIntro } from "./titleintro.js";
 import { MenuController } from "./menus.js";
 import { drawLoadingBar } from "./loading.js";
-import { loadHudFonts } from "./hudfont.js";
-import { createLapTimer, stepLapTimer, resetLapTimer } from "./laptimer.js";
+import { loadHudFonts, drawBigText, measureBigText, drawBodyText, measureBodyText } from "./hudfont.js";
+import { createLapTimer, stepLapTimer, resetLapTimer, unarmLapTimer } from "./laptimer.js";
 import { racerSound } from "./racersound.js";
 import { createSkyLayers } from "./sky.js";
 import { createScenery } from "./scenery.js";
+import { createGeoSpawner } from "./geospawner.js";
+import { loadGeoAssets } from "./geoassets.js";
 import { loadAutosave, applySnapshot, captureSnapshot, saveAutosave } from "../data/autosave.js";
 
 /** Authoring hook: ?level=hill-test or ?level=1 (resolved after manifest hydrate).
@@ -57,15 +61,42 @@ const LOADING_T = 180;
 // Quick globe-backed loading screen on the way INTO a course (menu → RACE) —
 // a short beat so the track resolves behind the map-select globe.
 const RACE_LOADING_T = 90;
+// How long the autosave icon stays on screen after a save call (60Hz frames).
+const AUTOSAVE_FLASH_FRAMES = 90;
+// Pre-menu crawlcard screen: the crawlcard save-device model
+// (assets/3D/models/crawlcard.glb) spins on a black background with the
+// autosave explanation beneath it. Plays between PRESS START and the intro's
+// loading bar, so the notice lands before the menu loop starts. HOLD is 60Hz
+// frames before it auto-advances (skipping is disabled).
+const CRAWLCARD_HOLD = 300;
+const CRAWLCARD_CAM_Z = 4.6;         // straight-on camera distance
+const CRAWLCARD_SCALE = 0.57;        // render scale on top of prepareVehicleMesh fit (~1/3 of original)
+const CRAWLCARD_Y = 66;              // model center row (320x240 frame)
+const CRAWLCARD_SPIN = 1.2;          // degrees per 60Hz frame (full spin ~5s)
+const CRAWLCARD_MSG = "When this icon displays, the game saves. Please do not turn off or unplug the cabinet while this is on screen.";
+// Flat-lighting direction for the spinning card (normalized 0.45/0.80/0.30,
+// same rig the vehicle mesh uses so the card reads lit from the upper right).
+const CARD_LX = 0.466, CARD_LY = 0.828, CARD_LZ = 0.311;
 
 // Flat backdrop behind the MAIN/GAMEMODES/COURSES/etc. menu screens — the 3D
 // orbiting track scene used to render back there; now it's just this.
 const MENU_BG = rgba(9, 8, 15);
 
+const WHITE = rgba(255, 255, 255);
+
 const SMOKE_COLORS = [rgba(200, 200, 205), rgba(80, 165, 255), rgba(255, 150, 50), rgba(200, 90, 255)];
 const BOOST_COLORS = [rgba(255, 200, 80), rgba(255, 120, 40), rgba(255, 240, 180)];
 const FLARE_TINT = rgba(255, 250, 235);
 const DUST_COLORS = [rgba(150, 130, 95), rgba(118, 98, 68)];  // off-road dirt kick-up
+
+// UV tile scale for geo GLB terrain textures — matches the legacy island
+// platforms (0.08) and sits near the racer's off-road grass tile density (0.07)
+// so the grass/dirt zones read at a similar texel pitch as the floor.
+const GEO_TEX_SCALE = 0.08;
+
+// Head2head player accent colors (HUD + winner banner).
+const P1_ACCENT = rgba(120, 240, 200);
+const P2_ACCENT = rgba(120, 170, 255);
 
 // Headlight FX anchors are pulled ~HL_INSET screen px toward the screen center
 // (perspective-corrected at the light's depth). The nudge moves along the
@@ -98,18 +129,28 @@ export class RacerGame {
     // full road length stays visible. Enables the renderer's fog-to-sky mode.
     setFogDistance(20, 170);
     this.input = new InputController();
-    this.state = "INTRO";           // warning card → title cinematic → load bar
+    this._padSrcP1 = null;         // cached per-frame gamepad slots (see _updatePadSources)
+    this._padSrcP2 = -1;
+    this.state = "INTRO";           // warning card → title cinematic → crawlcard → load bar
     this.intro = new TitleIntro();
     this.menu = new MenuController();
     this.menu.onPersist = () => {
       saveAutosave(captureSnapshot(racerSound, this));
+      this._autosaveFlashT = AUTOSAVE_FLASH_FRAMES;
+      this._autosaveAnimStart = this.frame;
     };
     this._assetsReady = false;
     this.frame = 0;
     this.levelIdx = 0;             // finalized after hydrateLevels in _load
     this.track = null;
+    // Player slots — [{ input, vehicle, cam, lapTimer, place, color }]. Single
+    // player has one entry; HEAD2HEAD has two. `vehicle`/`cam` below stay as
+    // aliases to slot 0 for the legacy single-player code paths.
+    this.players = null;
     this.vehicle = null;
     this.cam = null;
+    this.gameMode = "TIME ATTACK"; // last PLAY-mode picked in the GAMEMODES menu
+    this.h2h = null;               // head2head race state: { lapsToWin, over, winner, overT }
     this.tireStacks = null;    // destructible tire-stack barriers (open walls)
     this.tex = { road: null, grass: null };
     this.fx = null;           // FX billboard sprites (flare / lightray / smoke)
@@ -117,9 +158,13 @@ export class RacerGame {
     this.particles = [];
     this.sky = createSkyLayers();
     this.scenery = createScenery();
+    this.geo = createGeoSpawner();
     this.hudFonts = null;      // sprite numeral fonts (racer/hudfont.js)
-    this.place = 1;            // placeholder — position display until a race system exists
-    this.lapTimer = createLapTimer();
+    this.autosaveIconAnim = null; // assets/2D/ui/autosave_icon.gif -- all frames + delays (engine/gifdecode.js)
+    this.crawlcardMesh = null;   // prepared tris for assets/3D/models/crawlcard.glb (pre-menu screen)
+    this._crawlcardT = 0;        // 60Hz frames spent on the pre-menu crawlcard screen
+    this._autosaveFlashT = 0;  // frames left to show the autosave icon
+    this._autosaveAnimStart = 0; // this.frame value when the flash last started -- gif always replays from its own frame 0
     this._acc = 0;
     this._last = 0;
     this._raf = 0;
@@ -180,7 +225,7 @@ export class RacerGame {
     this.menu.courseRow = this.levelIdx;
     this._previewIdx = this.levelIdx;
 
-    const [road, grass, meshData, hudFonts, flare, ray, smoke] = await Promise.all([
+    const [road, grass, meshData, hudFonts, flare, ray, smoke, autosaveIconAnim, crawlcardMeshData, geoAssets, biomeTextures] = await Promise.all([
       loadTexture(assetUrl("assets/2D/textures/base/rock.png"), { wrap: true }),
       loadTexture(assetUrl("assets/2D/textures/base/grass.png"), { wrap: true }),
       // applyNodeTransforms: respect rotations the creator bakes into the
@@ -190,12 +235,52 @@ export class RacerGame {
       loadTexture(assetUrl("assets/2D/sprites/fx/headlight_flare.png"), { wrap: false }),
       loadTexture(assetUrl("assets/2D/sprites/fx/lightray.png"), { wrap: false }),
       loadTexture(assetUrl("assets/2D/sprites/fx/smoke_anim.png"), { wrap: false }),
+      // All frames + delays, so the HUD toast icon actually plays.
+      loadAnimatedTexture(assetUrl("assets/2D/ui/autosave_icon.gif")),
+      // The 3D save-device model for the pre-menu crawlcard screen. Its scene
+      // nodes carry the authored translations (screen/grip/chip pieces), so
+      // applyNodeTransforms is required to assemble the device correctly.
+      loadGLBMeshIfAvailable(assetUrl("assets/3D/models/crawlcard.glb"), "crawlcard", false, { applyNodeTransforms: true }),
+      // Island/mountain/land-ring GLBs for the geo spawner (racer/geoassets.js).
+      // These resolve before _assetsReady flips, so the first geo.place() can
+      // consume the registry. The return value is the registry map (unused).
+      loadGeoAssets(),
+      // Biome terrain textures (top/side/under) for the geo GLBs — the same
+      // base textures the legacy platformer uses (game/textureatlas.js). Shared
+      // URLs dedupe in loadTexture's cache. Loaded once, held on this.biomeTextures.
+      (async () => {
+        const map = {};
+        await Promise.all(["default", ...BIOME_NAMES].map(async (name) => {
+          const urls = getBiomeTextureUrls(name);
+          const [top, side, under] = await Promise.all([
+            loadTexture(urls.top, { wrap: true }),
+            loadTexture(urls.side, { wrap: true }),
+            loadTexture(urls.under, { wrap: true }),
+          ]);
+          map[name] = { top, side, under };
+        }));
+        return map;
+      })(),
     ]);
     this.tex.road = road;
     this.tex.grass = grass;
     this.mesh = prepareVehicleMesh(meshData);
     this.hudFonts = hudFonts;
     this.fx = { flare, ray, smoke };
+    this.autosaveIconAnim = autosaveIconAnim;
+    this.biomeTextures = biomeTextures;
+    // Center the card on its own vertical midpoint too (prepareVehicleMesh
+    // only centers XZ / rests the base on Y=0) so the spinner can place the
+    // model's visual center exactly where the layout wants it.
+    this.crawlcardMesh = prepareVehicleMesh(crawlcardMeshData);
+    if (this.crawlcardMesh && this.crawlcardMesh.tris) {
+      let minY = Infinity, maxY = -Infinity;
+      for (const t of this.crawlcardMesh.tris) {
+        minY = Math.min(minY, t.ay, t.by, t.cy);
+        maxY = Math.max(maxY, t.ay, t.by, t.cy);
+      }
+      this.crawlcardMesh.centerY = (minY + maxY) * 0.5;
+    }
     // Scenery texture + sky layers load in parallel (non-blocking); trees
     // for the first level are placed once the pine texture is in.
     await this.scenery.load();
@@ -206,7 +291,69 @@ export class RacerGame {
     this._assetsReady = true;
   }
 
-  /** Build a level's runtime state (track, vehicle, chase cam, scenery).
+  /** Build the player slots for the current gameMode on the loaded track.
+   *  Slot 0 always reuses this.input (owns the keyboard + first pad); a
+   *  HEAD2HEAD second slot reads pad 1 and shares the same GamepadManager. */
+  _buildPlayers() {
+    const multi = this.gameMode === "HEAD2HEAD";
+    const players = [];
+    // P2 spawns one car-width to the right of the start line so the two cars
+    // don't overlap at the grid; P1 takes the left slot.
+    const SPAWN_GAP = 1.1;
+    const mk = (input, color, lane) => {
+      const vehicle = createVehicle(this.track);
+      if (lane !== 0) {
+        const px = -cosDeg(vehicle.yaw);
+        const pz = sinDeg(vehicle.yaw);
+        vehicle.x += px * SPAWN_GAP * lane;
+        vehicle.z += pz * SPAWN_GAP * lane;
+      }
+      return { input, vehicle, cam: createChaseCam(vehicle), lapTimer: createLapTimer(), place: 1, color };
+    };
+    // ---- Gamepad slot assignment -------------------------------------------
+    // Sources resolve dynamically EVERY frame: _updatePadSources caches the
+    // currently-connected slots and the controllers re-read the cache on each
+    // sample, so pads that connect after build time (or that the browser only
+    // exposes late — getGamepads can be empty mid-menu) still land on P2. P1 =
+    // keyboard + pad, P2 = pad. With 2+ pads each player pins a distinct slot
+    // (enumerated by index, not assumed 0/1); with exactly 1 pad P1 is
+    // keyboard-only and P2 takes the pad; with none, P2 is idle.
+    this.input.setPadSource(() => this._padSrcP1);
+    players.push(mk(this.input, 0, -1));
+    if (multi) {
+      players.push(mk(new InputController({ padIndex: () => this._padSrcP2, keyboard: false, gp: this.input.gp }), 1, 1));
+    }
+    // Stable per-band view objects: sky.blit keys its yaw-scroll state off the
+    // view object identity, so it must NOT be recreated every frame.
+    players.forEach((p, i) => {
+      p.view = multi ? { y0: i === 0 ? 0 : HALF_H, h: HALF_H } : null;
+    });
+    return players;
+  }
+
+  /** Recompute the per-player gamepad slots from the pads currently exposed by
+   *  the browser, cached so both controllers resolve without re-querying.
+   *  Called once per display frame; see _buildPlayers for the policy. Single
+   *  player: P1 takes the first connected pad (no reliance on connect events —
+   *  a pad detected mid-run is picked up the next frame). Multi: see below. */
+  _updatePadSources() {
+    const slots = [];
+    const all = this.input.gp.safeGetGamepads();
+    for (let i = 0; i < all.length; i++) if (all[i]) slots.push(i);
+    const multi = !!(this.players && this.players.length > 1);
+    let p1, p2 = -1;
+    if (multi) {
+      if (slots.length >= 2) { p1 = slots[0]; p2 = slots[1]; }
+      else if (slots.length === 1) { p1 = -1; p2 = slots[0]; }
+      else { p1 = -1; p2 = -1; }
+    } else {
+      p1 = slots.length >= 1 ? slots[0] : -1;
+    }
+    this._padSrcP1 = p1;
+    this._padSrcP2 = p2;
+  }
+
+  /** Build a level's runtime state (track, players/vehicles, chase cams, scenery).
    *  Resolves only through the levels.js list. Safe to call repeatedly —
    *  unloads + swaps. Stale async resolves are ignored via _loadGen.
    *  opts.preview: skip audio duck/fade (used by the COURSES preloader in
@@ -219,13 +366,36 @@ export class RacerGame {
     const track = await resolveLevelTrack(getLevelDef(idx));
     if (gen !== this._loadGen) return this;
     this.track = track;
-    this.vehicle = createVehicle(this.track);
-    this.cam = createChaseCam(this.vehicle);
+    this.players = this._buildPlayers();
+    this.vehicle = this.players[0].vehicle;
+    this.cam = this.players[0].cam;
     this.tireStacks = createTireStacks(this.track);
-    if (this._assetsReady) this.scenery.place(this.track);
-    snapChaseCam(this.cam, this.vehicle);
-    resetLapTimer(this.lapTimer);
-    this.place = 1;
+    if (this._assetsReady) {
+      this.scenery.place(this.track);
+      // Geo: GLB islands/mountains/rings + procedural buildings, placed from
+      // the level's `geo` profile (null → DEFAULT_GEO_PROFILE). The spawner is
+      // stamped on the track so vehicle.js can resolve solid-wall collision.
+      // Terrain GLBs get per-zone biome textures (top/side/under) baked into
+      // their precached tris; missing textures fall back to flat tints.
+      const bio = getBiome(this.track.biome);
+      const gTex = this.biomeTextures[normalizeBiome(this.track.biome)] || null;
+      this.geo.place(this.track, this.track.geoProfile || null, {
+        ...bio,
+        textureTop: gTex ? gTex.top : null,
+        textureSide: gTex ? gTex.side : null,
+        textureUnder: gTex ? gTex.under : null,
+        textureScale: GEO_TEX_SCALE,
+      });
+      this.track.geo = this.geo;
+    }
+    for (const p of this.players) {
+      snapChaseCam(p.cam, p.vehicle);
+      resetLapTimer(p.lapTimer);
+      p.place = 1;
+    }
+    this.h2h = this.gameMode === "HEAD2HEAD"
+      ? { lapsToWin: 3, over: false, winner: -1, overT: 0, winnerMs: 0 }
+      : null;
     this._previewIdx = idx;
     return this;
   }
@@ -238,7 +408,7 @@ export class RacerGame {
       await this.loadLevel(this.levelIdx);
       if (!this._running) return;
       this.state = "RACE";
-      racerSound.startRace();
+      racerSound.startRace((this.players || []).length > 1);
     } catch (err) {
       console.error("[racer] race start failed", err);
       if (this._running) {
@@ -258,8 +428,16 @@ export class RacerGame {
   unloadLevel(opts) {
     this.particles.length = 0;
     this.tireStacks = null;
-    resetLapTimer(this.lapTimer);
-    this.place = 1;
+    if (this.geo) this.geo.reset();
+    this.track = null;
+    // P2 owns its own InputController (keyboard off, shared GamepadManager);
+    // destroy it so its listeners don't outlive the level. P1's this.input
+    // lives for the whole game session.
+    if (this.players) {
+      for (let i = 1; i < this.players.length; i++) this.players[i].input.destroy();
+    }
+    this.players = null;
+    this.h2h = null;
     if (!(opts && opts.quiet)) {
       racerSound.duck();
       racerSound.fadeOutMusic(900);
@@ -267,8 +445,7 @@ export class RacerGame {
   }
 
   // ---- Controls mapping --------------------------------------------------------
-  _readControls() {
-    const inp = this.input;
+  _readControls(inp) {
     const throttle = inp.axisY < -0.25 || inp.isDown(BTN_FLAGS.A);
     const brake = inp.axisY > 0.35 || inp.isDown(BTN_FLAGS.B);
     return {
@@ -281,8 +458,8 @@ export class RacerGame {
     };
   }
 
-  _rearHeld() {
-    return this.input.isDown(BTN_FLAGS.Y) || this.input.isKeyDown("KeyR");
+  _rearHeld(inp) {
+    return inp.isDown(BTN_FLAGS.Y) || inp.isKeyDown("KeyR");
   }
 
   // ---- Frame tick -----------------------------------------------------------------
@@ -292,7 +469,12 @@ export class RacerGame {
     this._last = ts;
     if (dt > MAX_FRAME_MS) dt = MAX_FRAME_MS;
 
+    this._updatePadSources();
     this.input.sample();
+    if (this.players) {
+      for (let i = 1; i < this.players.length; i++) this.players[i].input.sample();
+    }
+    if (this._autosaveFlashT > 0) this._autosaveFlashT--;
 
     // ---- State transitions (per display frame) ---------------------------------
     const startPressed = this.input.justPressed(BTN_FLAGS.START);
@@ -302,9 +484,23 @@ export class RacerGame {
         if (this.intro.pressStart() === "start") racerSound.rev();
       }
       if (this.intro.finished) {
+        // Title intro done (loading bar filled) — the menu loop starts.
         this.state = "MENU";
         this.menu.reset();
         racerSound.playMenuMusic();
+      } else if (this.intro.phase === "CRAWL") {
+        // PRESS START accepted — the pre-menu crawlcard screen (spinning save
+        // device + autosave notice) plays before the intro's loading bar, then
+        // beginLoad() resumes the LOAD phase → MENU.
+        this.state = "CRAWLCARD";
+        this._crawlcardT = 0;
+      }
+    } else if (this.state === "CRAWLCARD") {
+      // Auto-advance after the hold; no skipping (the notice must be read).
+      // Resume the title intro's LOAD phase so the loading bar fills → MENU.
+      if (this._crawlcardT >= CRAWLCARD_HOLD) {
+        this.intro.beginLoad();
+        this.state = "INTRO";
       }
     } else if (this.state === "MENU") {
       const play = this.menu.tick(this.input) === "PLAY";
@@ -324,6 +520,7 @@ export class RacerGame {
       if (play) {
         const idx = this.menu.selectedLevelIdx | 0;
         this.levelIdx = idx;
+        this.gameMode = this.menu.gameMode || "TIME ATTACK";
         // Course selected: fade the menu theme out, then run the quick
         // globe-backed loading screen before dropping into RACE.
         racerSound.fadeOutMusic(450);
@@ -331,11 +528,24 @@ export class RacerGame {
         this._loadingTo = "RACE";
         this.state = "LOADING";
       }
-    } else if (this.state === "RACE" &&
-               (startPressed || this.input.keyJustPressed("Escape"))) {
-      this.state = "PAUSE";
-      this.menu.enterPause(this.input);
-      racerSound.duck();
+    } else if (this.state === "RACE") {
+      const h = this.h2h;
+      if (h && h.over) {
+        // Head2head finished: show the winner banner until it times out or the
+        // player skips back to the menu.
+        h.overT++;
+        if (startPressed || this.input.keyJustPressed("Escape") || h.overT > 360) {
+          this.unloadLevel();
+          this._loadingT = 0;
+          this._menuLoadPending = false;
+          this._loadingTo = "MENU";
+          this.state = "LOADING";
+        }
+      } else if (startPressed || this.input.keyJustPressed("Escape")) {
+        this.state = "PAUSE";
+        this.menu.enterPause(this.input);
+        racerSound.duck();
+      }
     } else if (this.state === "PAUSE") {
       const r = this.menu.tick(this.input);
       if (r === "RESUME") {
@@ -360,6 +570,7 @@ export class RacerGame {
       this.frame++;
       if (this.state === "RACE") this._step();
       else if (this.state === "INTRO") this.intro.step(this._assetsReady);
+      else if (this.state === "CRAWLCARD") this._crawlcardT++;
       else if (this.state === "MENU") this._titleAngle += 0.15;
       else if (this.state === "LOADING") {
         this._loadingT++;
@@ -397,21 +608,96 @@ export class RacerGame {
   }
 
   _step() {
-    const v = this.vehicle;
-    const wasRespawning = v.respawnT > 0;
-    const controls = this._readControls();
-    stepVehicle(v, controls, this.track);
-    stepTireStacks(this.tireStacks, v);
-    v.odometer += Math.abs(v.speedF);
-    racerSound.update(v, controls);
-    if (wasRespawning && v.respawnT === 0) {
-      snapChaseCam(this.cam, v);
-      resetLapTimer(this.lapTimer);
+    const players = this.players || [];
+    const multi = players.length > 1;
+    for (const p of players) {
+      const v = p.vehicle;
+      const wasRespawning = v.respawnT > 0;
+      const controls = this._readControls(p.input);
+      stepVehicle(v, controls, this.track);
+      stepTireStacks(this.tireStacks, v);
+      v.odometer += Math.abs(v.speedF);
+      racerSound.update(v, controls, p === players[0] ? 0 : 1);
+      if (wasRespawning && v.respawnT === 0) {
+        snapChaseCam(p.cam, v);
+        unarmLapTimer(p.lapTimer);
+      }
+      stepLapTimer(p.lapTimer, this.track, v.x, v.z, v.trackIdx, STEP_MS);
+      updateChaseCam(p.cam, v, this.track, this._rearHeld(p.input));
+      this._spawnParticles(v);
     }
-    stepLapTimer(this.lapTimer, this.track, v.x, v.z, v.trackIdx, STEP_MS);
-    updateChaseCam(this.cam, v, this.track, this._rearHeld());
-    this._spawnParticles(v);
+    if (multi) {
+      this._resolveCarCollisions(players);
+      // Rank by true race progress: completed laps, then arc distance covered
+      // along the spline THIS lap (lapTimer.dist). The old tiebreaker compared
+      // curMs (elapsed wall-clock time in the current lap) — that value ticks
+      // up identically for every car every frame, so it never actually broke
+      // ties and `place` sat frozen at spawn order (P1 always "1st", P2 always
+      // "2nd" — i.e. the player NUMBER, not the real position).
+      const totalLen = this.track.totalLen || 0;
+      const progress = (p) => p.lapTimer.lap * totalLen + p.lapTimer.dist;
+      const sorted = [...players].sort((a, b) => progress(b) - progress(a));
+      sorted.forEach((p, i) => { p.place = i + 1; });
+      this._stepH2H();
+    }
     this._updateParticles();
+  }
+
+  // ---- Car-vs-car collision (HEAD2HEAD) ----------------------------------------
+  // Circle-circle push-apart + a soft velocity bounce along the contact
+  // normal, in the same spirit as the wall-collision feel in vehicle.js
+  // (TUNE.wallBounce/wallSpeedLoss) but resolved between two live cars
+  // instead of against the static spline border. Runs once per pair, after
+  // every car has already taken its physics step for the frame.
+  _resolveCarCollisions(players) {
+    const R = 0.85;           // combined contact radius (~ car width)
+    const BOUNCE = 0.6;        // fraction of the closing speed reflected back
+    const SPEED_LOSS = 0.3;    // fraction of each car's speed bled off on hit
+    for (let i = 0; i < players.length; i++) {
+      for (let j = i + 1; j < players.length; j++) {
+        const a = players[i].vehicle, b = players[j].vehicle;
+        if (a.respawnT > 0 || b.respawnT > 0) continue;
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist <= 0.0001 || dist >= R) continue;
+        const nx = dx / dist, nz = dz / dist;
+        // Push both cars apart along the contact normal so they never overlap.
+        const overlap = R - dist;
+        a.x -= nx * overlap * 0.5;
+        a.z -= nz * overlap * 0.5;
+        b.x += nx * overlap * 0.5;
+        b.z += nz * overlap * 0.5;
+        // Only resolve an actually-approaching hit (separating cars pass through).
+        const rvx = b.vx - a.vx, rvz = b.vz - a.vz;
+        const vn = rvx * nx + rvz * nz;
+        if (vn < 0) {
+          const impulse = -(1 + BOUNCE) * vn * 0.5;
+          a.vx -= impulse * nx; a.vz -= impulse * nz;
+          b.vx += impulse * nx; b.vz += impulse * nz;
+          a.vx *= 1 - SPEED_LOSS; a.vz *= 1 - SPEED_LOSS;
+          b.vx *= 1 - SPEED_LOSS; b.vz *= 1 - SPEED_LOSS;
+          // Reuse the wall-hit timer/FX hook so a car-car hit gets the same
+          // crash SFX (racerSound.update edge-detects off wallHitT) and the
+          // same brief camera/impact tell as a wall scrape.
+          a.wallHitT = 10; b.wallHitT = 10;
+        }
+      }
+    }
+  }
+
+  _stepH2H() {
+    const h = this.h2h;
+    if (!h || h.over) return;
+    for (let i = 0; i < this.players.length; i++) {
+      if (this.players[i].lapTimer.lap > h.lapsToWin) {
+        h.over = true;
+        h.winner = i;
+        h.overT = 0;
+        h.winnerMs = this.players[i].lapTimer.bestMs;
+        racerSound.menuConfirm();
+        break;
+      }
+    }
   }
 
   // ---- Particles ---------------------------------------------------------------
@@ -562,12 +848,20 @@ export class RacerGame {
   // ---- Render --------------------------------------------------------------------
   _render() {
     const rd = this.rd;
-    const v = this.vehicle;
 
     // Intro cinematic is pure 2D — no 3D scene behind it.
     if (this.state === "INTRO") {
       this.intro.render(rd, this.hudFonts, this.frame, this._assetsReady);
       present(rd, 0, this.intro.fade);
+      return;
+    }
+
+    // Pre-menu crawlcard screen: the save-device model spins on black with the
+    // autosave notice below it — one 3D mesh on a 2D backdrop, then the intro
+    // resumes its LOAD phase (loading bar) and drops into MENU.
+    if (this.state === "CRAWLCARD") {
+      this._drawCrawlcardScreen(rd);
+      present(rd, 0, 0);
       return;
     }
 
@@ -582,6 +876,7 @@ export class RacerGame {
         drawGlobePlaceholder(rd, 0, 0, SCREEN_W, SCREEN_H);
         drawGlobeCrosshair(rd, 0, 0, SCREEN_W, SCREEN_H, this.frame);
         drawLoadingBar(rd, this.hudFonts, Math.min(1, this._loadingT / RACE_LOADING_T));
+        this._drawAutosaveIcon(rd);
         present(rd, 0, 0);
         return;
       }
@@ -603,6 +898,7 @@ export class RacerGame {
       clearSky(rd, yaw, this.frame);
       this.sky.blit(rd, yaw, pitch);
       drawLoadingBar(rd, this.hudFonts, Math.min(1, this._loadingT / LOADING_T));
+      this._drawAutosaveIcon(rd);
       present(rd, 0, 0);
       return;
     }
@@ -620,74 +916,321 @@ export class RacerGame {
         drawGlobeCrosshair(rd, 0, 0, SCREEN_W, SCREEN_H, this.frame);
       }
       this.menu.draw(rd, this.hudFonts, this.frame);
+      this._drawAutosaveIcon(rd);
       present(rd, 0, 0);
       return;
     }
 
     // RACE / PAUSE use the chase cam and need a live track + vehicle.
-    let cam = this.cam;
-    if (!this.track || !v || !cam) {
+    const players = this.players;
+    if (!this.track || !players || players.length === 0) {
       clearSky(rd, this._titleAngle + 180, this.frame);
       this.sky.blit(rd, this._titleAngle + 180, 16);
       present(rd, 0, 0);
       return;
     }
 
-    clearSky(rd, cam.yaw, this.frame);
-    this.sky.blit(rd, cam.yaw, cam.pitch);
+    if (players.length === 1) {
+      // ---- Single player: one full-screen pass ---------------------------------
+      const p = players[0];
+      rd.viewY0 = 0;
+      rd.viewY1 = SCREEN_H - 1;
+      p.cam.sliceY0 = 0;
+      p.cam.sliceVScale = 1;
+      this._renderScene(p, 0, SCREEN_H, players);
+      drawRacerHUD(rd, p.vehicle, this.frame, this.hudFonts, p.place, this.track, p.lapTimer);
+      if (this.state === "PAUSE") this.menu.draw(rd, this.hudFonts, this.frame);
+      this._drawAutosaveIcon(rd);
+      const fade = this._respawnFade(p.vehicle);
+      present(rd, 0, fade, fade);
+      return;
+    }
 
-    {
-      const tris = buildTrackTris(this.track, this.tex, cam, this.frame);
-      this.scenery.build(cam, this.frame, tris);
-      buildTireStackTris(this.tireStacks, cam, tris);
+    // ---- Head2head: two vertical bands (P1 top, P2 bottom) ----------------------
+    const top = players[0], bot = players[1];
+
+    rd.viewY0 = 0;
+    rd.viewY1 = HALF_H - 1;
+    top.cam.sliceY0 = 0;
+    top.cam.sliceVScale = 2;
+    this._renderScene(top, 0, HALF_H, players);
+    drawRacerHUD(rd, top.vehicle, this.frame, this.hudFonts, top.place, this.track,
+      top.lapTimer, { view: top.view, color: top.color, allPlayers: players });
+    const fadeTop = this._respawnFade(top.vehicle);
+
+    rd.viewY0 = HALF_H;
+    rd.viewY1 = SCREEN_H - 1;
+    bot.cam.sliceY0 = HALF_H;
+    bot.cam.sliceVScale = 2;
+    this._renderScene(bot, HALF_H, HALF_H, players);
+    drawRacerHUD(rd, bot.vehicle, this.frame, this.hudFonts, bot.place, this.track,
+      bot.lapTimer, { view: bot.view, color: bot.color, allPlayers: players });
+    const fadeBot = this._respawnFade(bot.vehicle);
+
+    // Restore full-viewport defaults (single-player paths above set their own).
+    rd.viewY0 = 0;
+    rd.viewY1 = SCREEN_H - 1;
+
+    if (this.state === "PAUSE") this.menu.draw(rd, this.hudFonts, this.frame);
+    if (this.h2h && this.h2h.over) this._drawH2HResult(rd);
+    this._drawAutosaveIcon(rd);
+
+    present(rd, 0, fadeTop, fadeBot);
+  }
+
+  _respawnFade(v) {
+    return v.respawnT > 0
+      ? Math.min(1, Math.sin((v.respawnT / 45) * Math.PI) * 0.9)
+      : 0;
+  }
+
+  // ---- Pre-menu crawlcard screen ---------------------------------------------
+  // The autosave icon's 3D device (assets/3D/models/crawlcard.glb) spins on a
+  // black background, with the save-notice message in white smallfont beneath.
+  // Runs once after the title intro finishes and before the menu loop starts.
+  _drawCrawlcardScreen(rd) {
+    drawRect(rd, 0, 0, SCREEN_W, SCREEN_H, rgba(0, 0, 0), true);
+    // The backdrop is HUD-space (no depth write), so reset depth first — the
+    // mesh's triangles are depth-tested and must always paint over the black.
+    rd.depth.fill(Infinity, 0, SCREEN_W * SCREEN_H);
+
+    // Straight-on camera at (0, 0, z) looking at the origin.
+    const cam = { x: 0, y: 0, z: CRAWLCARD_CAM_Z, yaw: 180, pitch: 0, fovMul: 1 };
+    const spin = (this.frame * CRAWLCARD_SPIN) % 360;
+    const tris = this._buildCrawlcardTris(cam, spin);
+    tris.sort((a, b) => b.avgZ - a.avgZ);
+    for (const t of tris) {
+      const fn = t.texture ? drawTexturedTriangle : drawTriangle;
+      const v0 = t.verts[0];
+      for (let i = 1; i + 1 < t.verts.length; i++) {
+        fn(rd, v0, t.verts[i], t.verts[i + 1], t.color, t.texture);
+      }
+    }
+
+    // Notice in white smallfont, centered + word-wrapped below the card.
+    const fonts = this.hudFonts;
+    const targetH = 14;
+    const maxW = SCREEN_W - 24;
+    const lines = fonts && fonts.body
+      ? this._wrapBodyLines(fonts, CRAWLCARD_MSG, targetH, maxW)
+      : this._wrapFallbackLines(CRAWLCARD_MSG, maxW >> 1);
+    const lineStep = targetH + 5;
+    let y = SCREEN_H - (lines.length * lineStep) - 6;
+    for (const line of lines) {
+      if (fonts && fonts.body) {
+        const w = measureBodyText(fonts, line, targetH, 1);
+        drawBodyText(rd, fonts, line, (SCREEN_W - w) >> 1, y, targetH, WHITE, 1);
+      } else {
+        const s = Math.max(1, Math.round(targetH / 5));
+        drawText(rd, line, (SCREEN_W - line.length * 5 * s) >> 1, y, 0xffffffff, s);
+      }
+      y += lineStep;
+    }
+  }
+
+  // Rotates the prepared crawlcard tris around the world Y axis and projects
+  // them. Same scale→yaw transform family as buildVehicleTris, but the card
+  // owns its own constants (no car tuning sliders) and is anchored by its
+  // visual center (prep.centerY) so the model sits exactly on CRAWLCARD_Y.
+  _buildCrawlcardTris(cam, yawDeg) {
+    const prep = this.crawlcardMesh;
+    const out = [];
+    if (!prep || !prep.tris || !prep.tris.length) return out;
+    const sc = CRAWLCARD_SCALE;
+    const yaw = yawDeg * (Math.PI / 180);
+    const cyw = Math.cos(yaw), syw = Math.sin(yaw);
+    // World Y that projects to screen row CRAWLCARD_Y, then drop the model's
+    // own vertical midpoint onto it.
+    const centerWorldY = (HALF_H - CRAWLCARD_Y) / scaleAtY(CRAWLCARD_CAM_Z);
+    const yOff = centerWorldY - (prep.centerY || 0) * sc;
+    const w0 = {}, w1 = {}, w2 = {};
+    for (const t of prep.tris) {
+      const lx = (v, w) => {
+        const x = v[0] * sc, y = v[1] * sc, z = v[2] * sc;
+        w.x = x * cyw + z * syw;
+        w.y = y + yOff;
+        w.z = -x * syw + z * cyw;
+      };
+      lx([t.ax, t.ay, t.az], w0);
+      lx([t.bx, t.by, t.bz], w1);
+      lx([t.cx, t.cy, t.cz], w2);
+
+      const p0 = project(w0, cam);
+      if (!p0.visible) continue;
+      const p1 = project(w1, cam);
+      if (!p1.visible) continue;
+      const p2 = project(w2, cam);
+      if (!p2.visible) continue;
+
+      // Flat lighting from the world-space face normal (upper-right light).
+      const e1x = w1.x - w0.x, e1y = w1.y - w0.y, e1z = w1.z - w0.z;
+      const e2x = w2.x - w0.x, e2y = w2.y - w0.y, e2z = w2.z - w0.z;
+      let nx = e1y * e2z - e1z * e2y;
+      let ny = e1z * e2x - e1x * e2z;
+      let nz = e1x * e2y - e1y * e2x;
+      const nl = Math.hypot(nx, ny, nz) || 1;
+      nx /= nl; ny /= nl; nz /= nl;
+      const dot = Math.abs(nx * CARD_LX + ny * CARD_LY + nz * CARD_LZ);
+      const bright = 0.6 + 0.4 * dot;
+
+      const c = t.color;
+      const r = Math.min(255, ((c & 0xff) * bright)) | 0;
+      const g = Math.min(255, (((c >>> 8) & 0xff) * bright)) | 0;
+      const b = Math.min(255, (((c >>> 16) & 0xff) * bright)) | 0;
+      const lit = (255 << 24) | (b << 16) | (g << 8) | r;
+
+      if (t.texture) {
+        p0.u = t.ua; p0.v = t.va;
+        p1.u = t.ub; p1.v = t.vb;
+        p2.u = t.uc; p2.v = t.vc;
+      }
+      out.push({
+        verts: [{ ...p0 }, { ...p1 }, { ...p2 }],
+        color: lit,
+        avgZ: (p0.cz + p1.cz + p2.cz) * 0.3333333,
+        texture: t.texture || undefined,
+      });
+    }
+    return out;
+  }
+
+  // Greedy word wrap using the real smallfont advance metrics, so lines fit
+  // maxW px at the given target height. Used by the crawlcard notice (and any
+  // future body-text block).
+  _wrapBodyLines(fonts, text, targetH, maxW, gap = 1) {
+    const words = String(text).split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = "";
+    for (const w of words) {
+      const test = cur ? `${cur} ${w}` : w;
+      if (measureBodyText(fonts, test, targetH, gap) <= maxW) {
+        cur = test;
+      } else {
+        if (cur) lines.push(cur);
+        cur = w;
+      }
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  // Bitmap-font fallback wrap (5*scale px per char) when the body font is
+  // missing — the crawlcard state only runs after assets are in, so this is
+  // purely defensive.
+  _wrapFallbackLines(text, maxChars) {
+    const out = [];
+    for (const raw of String(text).split("\n")) {
+      let line = "";
+      for (const w of raw.split(/\s+/).filter(Boolean)) {
+        if (line && (line.length + w.length + 1) > maxChars) {
+          out.push(line);
+          line = w;
+        } else {
+          line = line ? `${line} ${w}` : w;
+        }
+      }
+      if (line) out.push(line);
+    }
+    return out;
+  }
+
+  // ---- Autosave icon ----------------------------------------------------------
+  // Bottom-right toast: shown for AUTOSAVE_FLASH_FRAMES whenever menu.onPersist
+  // fires a real save (course confirm, leaving OPTIONS, pause resume/quit —
+  // see the constructor). Clear of the minimap (top-right) and the drift bar
+  // (bottom-left-ish, BAR_X starts at 110), so it never collides with other
+  // HUD reads.
+  _drawAutosaveIcon(rd) {
+    const anim = this.autosaveIconAnim;
+    if (this._autosaveFlashT <= 0 || !anim || !anim.frames.length) return;
+    // Always replay from the gif's own frame 0 when a save toast starts,
+    // rather than sampling whatever point a free-running clock lands on.
+    const elapsedMs = (this.frame - this._autosaveAnimStart) * STEP_MS;
+    const frame = frameAtTime(anim, elapsedMs);
+    if (!frame) return;
+    const targetH = 18;
+    const pad = 6;
+    const scale = targetH / frame.height;
+    const targetW = Math.max(1, Math.round(frame.width * scale));
+    const x = SCREEN_W - pad - targetW;
+    const y = SCREEN_H - pad - targetH;
+    drawSpriteFit(rd, frame, x, y, targetH);
+  }
+
+  /** One full scene pass (sky + track + cars + FX + particles) as seen through
+   *  player `p`'s chase cam, restricted to the y-band [y0, y0+h). Passed
+   *  allPlayers so every car (own + opponent) renders into every band. */
+  _renderScene(p, y0, h, allPlayers) {
+    const rd = this.rd;
+    const cam = p.cam;
+    clearSky(rd, cam.yaw, this.frame, y0, h);
+    this.sky.blit(rd, cam.yaw, cam.pitch, p.view || undefined);
+
+    const tris = buildTrackTris(this.track, this.tex, cam, this.frame, getBiome(this.track.biome));
+    this.scenery.build(cam, this.frame, tris);
+    this.geo.build(cam, this.frame, tris);
+    buildTireStackTris(this.tireStacks, cam, tris);
+    for (const car of allPlayers) {
+      const cv = car.vehicle;
       // Hide/blink the car while respawning
-      if (this.mesh && (v.respawnT === 0 || (v.respawnT & 4))) {
+      if (this.mesh && (cv.respawnT === 0 || (cv.respawnT & 4))) {
         const carTris = buildVehicleTris(
-          this.mesh, v.x, v.y, v.z, v.yaw, v.pitch, v.roll, cam
+          this.mesh, cv.x, cv.y, cv.z, cv.yaw, cv.pitch, cv.roll, cam
         );
         for (const t of carTris) tris.push(t);
       }
-      tris.sort((a, b) => b.avgZ - a.avgZ);
-      for (const t of tris) {
-        const fn = t.texture ? drawTexturedTriangle : drawTriangle;
-        const v0 = t.verts[0];
-        for (let i = 1; i + 1 < t.verts.length; i++) {
-          fn(rd, v0, t.verts[i], t.verts[i + 1], t.color, t.texture);
-        }
-      }
-      // Headlight light-ray billboards: camera-facing sprites (alpha blended
-      // from the sprite) drawn after the scene + car so the beam is visible
-      // from every angle and its bright source at the nose corner isn't hidden
-      // by the body. depthBias lets it win over the car's front face.
-      if (this.fx && v.respawnT === 0) this._drawHeadlightRays(v, cam);
-      for (const p of this.particles) {
-        if (p.sprite) {
-          drawBillboardSprite(rd, p.sprite, p, cam, {
-            worldSize: p.size * 0.6,
-            tint: p.color,
-            additive: !!p.additive,
-            rows: 8,
-            frame: p.maxLife
-              ? Math.min(7, (((p.maxLife - p.life) * 8) / p.maxLife) | 0)
-              : 0,
-            fog: true,
-          });
-        } else {
-          drawPixelW(rd, p, cam, p.color, p.size);
-        }
-      }
-      this._drawHeadlightGlare(v, cam);
     }
+    tris.sort((a, b) => b.avgZ - a.avgZ);
+    for (const t of tris) {
+      const fn = t.texture ? drawTexturedTriangle : drawTriangle;
+      const v0 = t.verts[0];
+      for (let i = 1; i + 1 < t.verts.length; i++) {
+        fn(rd, v0, t.verts[i], t.verts[i + 1], t.color, t.texture);
+      }
+    }
+    // Headlight light-ray billboards: camera-facing sprites (alpha blended
+    // from the sprite) drawn after the scene + car so the beam is visible
+    // from every angle and its bright source at the nose corner isn't hidden
+    // by the body. depthBias lets it win over the car's front face.
+    for (const car of allPlayers) {
+      const cv = car.vehicle;
+      if (this.fx && cv.respawnT === 0) {
+        this._drawHeadlightRays(cv, cam);
+        this._drawHeadlightGlare(cv, cam);
+      }
+    }
+    for (const pa of this.particles) {
+      if (pa.sprite) {
+        drawBillboardSprite(rd, pa.sprite, pa, cam, {
+          worldSize: pa.size * 0.6,
+          tint: pa.color,
+          additive: !!pa.additive,
+          rows: 8,
+          frame: pa.maxLife
+            ? Math.min(7, (((pa.maxLife - pa.life) * 8) / pa.maxLife) | 0)
+            : 0,
+          fog: true,
+        });
+      } else {
+        drawPixelW(rd, pa, cam, pa.color, pa.size);
+      }
+    }
+  }
 
-    // ---- HUD ----------------------------------------------------------------------
-    // Only RACE / PAUSE reach here now (MENU returns early above).
-    drawRacerHUD(rd, v, this.frame, this.hudFonts, this.place, this.track, this.lapTimer);
-    if (this.state === "PAUSE") this.menu.draw(rd, this.hudFonts, this.frame);
-
-    // Screen fade during respawn for a clean transition
-    const fade = v.respawnT > 0
-      ? Math.min(1, Math.sin((v.respawnT / 45) * Math.PI) * 0.9)
-      : 0;
-    present(rd, 0, fade);
+  _drawH2HResult(rd) {
+    const h = this.h2h;
+    const winner = h.winner === 1 ? "P2 WINS!" : "P1 WINS!";
+    const col = h.winner === 1 ? P2_ACCENT : P1_ACCENT;
+    const py = 96;
+    drawRect(rd, 0, py, SCREEN_W, 48, rgba(10, 8, 18), true);
+    drawRect(rd, 0, py, SCREEN_W, 48, rgba(120, 200, 255), false);
+    const fonts = this.hudFonts;
+    if (fonts && fonts.big) {
+      const w = measureBigText(fonts, winner, 30, 2);
+      drawBigText(rd, fonts, winner, (SCREEN_W - w) >> 1, py + 9, 30, col, 2);
+    } else {
+      drawText(rd, winner, (SCREEN_W >> 1) - winner.length * 5, py + 20, col, 2);
+    }
+    drawRect(rd, 0, py + 48, SCREEN_W, 2, rgba(120, 200, 255), true);
   }
 }

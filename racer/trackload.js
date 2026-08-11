@@ -6,13 +6,14 @@
  * procgen scenery are ignored here (step 2+).
  */
 import { buildTrack } from "./track.js";
+import { normalizeBiome } from "./biomes.js";
 
 const MIN_POINTS = 3;
 
 /**
  * Validate spline-editor JSON and return a buildTrack def (no default ramp).
  * @param {object} data
- * @returns {{ cp: object[], halfWidth: number, sampleSpace: number, name?: string }}
+ * @returns {{ cp: object[], halfWidth: number, sampleSpace: number, name?: string, biome: string, skyBiome: string }}
  */
 export function parseSplineTrack(data) {
   if (!data || typeof data !== "object") {
@@ -48,6 +49,9 @@ export function parseSplineTrack(data) {
     sampleSpace: data.sampleSpace > 0 ? +data.sampleSpace : 3.2,
     name: typeof data.name === "string" ? data.name : undefined,
     applyDefaultRamp: false,
+    biome: normalizeBiome(data.biome),
+    skyBiome: normalizeBiome(data.skyBiome != null ? data.skyBiome : data.biome),
+    geo: data.geo && typeof data.geo === "object" ? data.geo : null,
   };
 }
 

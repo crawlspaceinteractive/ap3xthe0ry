@@ -1221,8 +1221,10 @@ export function buildMeshTris(meshData, worldX, worldY, worldZ, baseColor, camer
 // pre-rotated/scaled local coords so per-frame rendering only does cam-space
 // transform + clip, skipping all per-tri colorMode branches.
 //
-// Cache: Float32Array of 10 floats per tri:
-//   [ rx0,ry0,rz0, rx1,ry1,rz1, rx2,ry2,rz2, colorBitsAsFloat ]
+// Cache: Float32Array of 9 floats per tri (rotated/scaled local coords) +
+// parallel colorBuf. When the palette carries biome terrain textures the
+// cache ALSO bakes per-tri zone/uvMode/local UVs + the resolved textures, so
+// buildMeshTrisFromCache emits textured zone tris (top/side/under).
 //   rx/ry/rz = scale+yaw-rotated local coords (no world translation yet)
 
 export function precacheIslandColors(meshData, scale = 1, yawDeg = 0, islandPalette = null) {
@@ -1251,6 +1253,22 @@ export function precacheIslandColors(meshData, scale = 1, yawDeg = 0, islandPale
 
   const buf = new Float32Array(triCount * 9);
   const colorBuf = new Uint32Array(triCount);
+
+  // Biome terrain textures (carried over from the legacy platformer): when
+  // the palette supplies textureTop/Side/Under, bake per-tri zone + UV mode +
+  // local planar UVs (already × textureScale) so buildMeshTrisFromCache can
+  // emit textured tris with only a cheap world-offset add per instance.
+  const texTop = islandPal.textureTop || null;
+  const texSide = islandPal.textureSide || null;
+  const texUnder = islandPal.textureUnder || null;
+  const hasTextures = !!(texTop || texSide || texUnder);
+  const uvScale = islandPal.textureScale;
+  let zone = null, uvMode = null, uvBuf = null;
+  if (hasTextures) {
+    zone = new Uint8Array(triCount);
+    uvMode = new Uint8Array(triCount);
+    uvBuf = new Float32Array(triCount * 6);
+  }
 
   for (let t = 0; t < triCount; t++) {
     const i0 = indices[t*3], i1 = indices[t*3+1], i2 = indices[t*3+2];
@@ -1287,6 +1305,35 @@ export function precacheIslandColors(meshData, scale = 1, yawDeg = 0, islandPale
       colorBits = _shadePackedColor(islandPal.side, lit, sideMul);
     }
 
+    if (zone) {
+      // Zone mirrors buildMeshTris colorMode="island": top ny>0.55, under
+      // ny<-0.35, otherwise side. UV mode mirrors _setTerrainUVsForTri: faces
+      // with |ny|>0.55 (top OR under) project on XZ, steep faces on the
+      // dominant horizontal axis + Y.
+      let z;
+      if (faceNY > 0.55) z = 0;
+      else if (faceNY < -0.35) z = 2;
+      else z = 1;
+      let m;
+      if (Math.abs(faceNY) > 0.55) m = 0;
+      else m = Math.abs(nx2) > Math.abs(nz2) ? 1 : 2;
+      zone[t] = z; uvMode[t] = m;
+      const uv = t * 6;
+      if (m === 0) {
+        uvBuf[uv]   = rx0 * uvScale; uvBuf[uv+1] = rz0 * uvScale;
+        uvBuf[uv+2] = rx1 * uvScale; uvBuf[uv+3] = rz1 * uvScale;
+        uvBuf[uv+4] = rx2 * uvScale; uvBuf[uv+5] = rz2 * uvScale;
+      } else if (m === 1) {
+        uvBuf[uv]   = rz0 * uvScale; uvBuf[uv+1] = ry0 * uvScale;
+        uvBuf[uv+2] = rz1 * uvScale; uvBuf[uv+3] = ry1 * uvScale;
+        uvBuf[uv+4] = rz2 * uvScale; uvBuf[uv+5] = ry2 * uvScale;
+      } else {
+        uvBuf[uv]   = rx0 * uvScale; uvBuf[uv+1] = ry0 * uvScale;
+        uvBuf[uv+2] = rx1 * uvScale; uvBuf[uv+3] = ry1 * uvScale;
+        uvBuf[uv+4] = rx2 * uvScale; uvBuf[uv+5] = ry2 * uvScale;
+      }
+    }
+
     const base = t * 9;
     buf[base]   = rx0; buf[base+1] = ry0; buf[base+2] = rz0;
     buf[base+3] = rx1; buf[base+4] = ry1; buf[base+5] = rz1;
@@ -1294,13 +1341,24 @@ export function precacheIslandColors(meshData, scale = 1, yawDeg = 0, islandPale
     colorBuf[t] = colorBits;
   }
 
-  return { buf, colorBuf, triCount };
+  return {
+    buf, colorBuf, triCount,
+    textures: hasTextures ? [texTop, texSide, texUnder] : null,
+    uvScale: hasTextures ? uvScale : 0,
+    zone, uvMode, uvBuf,
+  };
 }
 
 // Build tris from a precached island buffer each frame.
 export function buildMeshTrisFromCache(cache, worldX, worldY, worldZ, camera) {
   if (!camera || !cache) return [];
   const { buf, colorBuf, triCount } = cache;
+  const zone = cache.zone || null;
+  const uvMode = cache.uvMode || null;
+  const uvBuf = cache.uvBuf || null;
+  const textures = cache.textures || null;
+  const uvScale = cache.uvScale || 0;
+  const hasUV = !!(zone && uvMode && uvBuf && textures);
   const tris = [];
 
   for (let t = 0; t < triCount; t++) {
@@ -1316,8 +1374,30 @@ export function buildMeshTrisFromCache(cache, worldX, worldY, worldZ, camera) {
 
     const colorBits = colorBuf ? colorBuf[t] : (buf[base+9] >>> 0);
     const avgZ = (cs0.cz + cs1.cz + cs2.cz) / 3;
+
+    // Textured zones: pick the zone texture and add the world-origin offset to
+    // the baked local planar UVs (u/v live on the cam-space verts so the near
+    // clip path interpolates them correctly).
+    let texture = null, zoneName = null;
+    if (hasUV) {
+      const z = zone[t];
+      texture = textures[z] || null;
+      if (texture) {
+        const m = uvMode[t];
+        let aU, aV;
+        if (m === 0) { aU = worldX * uvScale; aV = worldZ * uvScale; }
+        else if (m === 1) { aU = worldZ * uvScale; aV = worldY * uvScale; }
+        else { aU = worldX * uvScale; aV = worldY * uvScale; }
+        const b = t * 6;
+        cs0.u = uvBuf[b] + aU; cs0.v = uvBuf[b+1] + aV;
+        cs1.u = uvBuf[b+2] + aU; cs1.v = uvBuf[b+3] + aV;
+        cs2.u = uvBuf[b+4] + aU; cs2.v = uvBuf[b+5] + aV;
+        zoneName = z === 0 ? "top" : z === 1 ? "side" : "under";
+      }
+    }
+
     const clipped = _engClipNear([cs0, cs1, cs2]);
-    const emitted = _engEmitClipped(clipped, colorBits, avgZ, camera);
+    const emitted = _engEmitClipped(clipped, colorBits, avgZ, camera, texture, zoneName);
     for (const tri of emitted) tris.push(tri);
   }
 

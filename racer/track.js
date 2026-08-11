@@ -13,6 +13,7 @@
  * XYZ objects {x,y,z, bank?, hw?} from the spline editor. The AHURA west
  * straight jump ramp is applied only when applyDefaultRamp is true.
  */
+import { normalizeBiome } from "./biomes.js";
 
 // ---- Control points ---------------------------------------------------------
 // Ring layout (never self-intersects): angle around origin + radius + height.
@@ -128,6 +129,11 @@ export function buildTrack(def) {
   const halfWidth = cfg.halfWidth || HALF_WIDTH;
   const sampleSpace = cfg.sampleSpace || SAMPLE_SPACE;
   const applyDefaultRamp = !!cfg.applyDefaultRamp;
+  const biome = normalizeBiome(cfg.biome);
+  const skyBiome = normalizeBiome(cfg.skyBiome != null ? cfg.skyBiome : cfg.biome);
+  // Per-level geo profile (island/mountain/ring/building placement knobs).
+  // Consumed by racer/geospawner.js; null → the default profile applies.
+  const geoProfile = cfg.geo && typeof cfg.geo === "object" ? cfg.geo : null;
   const pts = normalizeControlPoints(cfg.cp || CP, halfWidth);
   const n = pts.length;
   if (n < 3) {
@@ -180,6 +186,25 @@ export function buildTrack(def) {
     const next = samples[(i + 1) % count];
     const cur = samples[i];
     cur.segLen = Math.hypot(next.x - cur.x, next.z - cur.z) || 1;
+  }
+
+  // ---- Lap-honor gates (control points) -------------------------------------
+  // A lap only scores after the car visits every control point in order (each
+  // control point = a disc centered on the spline at the nearest sample). The
+  // first control point (CP[0], the start/finish zone) is skipped — the finish
+  // is the seam, handled by the lap timer's arc-distance wrap. Players must
+  // thread these discs forward; reversing over the line no longer counts.
+  const gates = [];
+  for (let i = 1; i < n; i++) {
+    const cp = pts[i];
+    let gi = 0, gd = Infinity;
+    for (let k = 0; k < count; k++) {
+      const dx = samples[k].x - cp.x;
+      const dz = samples[k].z - cp.z;
+      const d = dx * dx + dz * dz;
+      if (d < gd) { gd = d; gi = k; }
+    }
+    gates.push({ x: samples[gi].x, z: samples[gi].z, r: halfWidth + 6 });
   }
 
   // ---- Optional AHURA west-straight ramp (gated) ----------------------------
@@ -246,11 +271,15 @@ export function buildTrack(def) {
     samples,
     count,
     totalLen: dist,
+    gates,
     minY,
     offroadY: minY - OFFROAD_DROP,
     transW: Math.max(TRANS_MIN_W, (maxEdge - (minY - OFFROAD_DROP)) / TRANS_SLOPE),
     lipIdx: applyDefaultRamp ? lipIdx : 0,
     spawnIdx: 0,
+    biome,
+    skyBiome,
+    geoProfile,
   };
 }
 
